@@ -12,27 +12,42 @@ pipeline {
         WORKSPACE_DIR = "${WORKSPACE}"
     }
 
-    stages {
-        stage('Setup Environment') {
-            steps {
-                script {
-                    try {
-                        sh '''
-                            apt-get update && apt-get install -y curl python3 python3-pip wget git
-                            pip3 install pyyaml requests
-                        '''
-                        sh '''
-                            mkdir -p ${WORKSPACE}/models
-                            mkdir -p ${WORKSPACE}/tmp
-                        '''
-                        echo "Environment setup completed successfully"
-                    } catch (Throwable e) {
-                        echo "Error during environment setup: ${e.message}"
-                        error("Failed to setup environment. Stopping pipeline.")
-                    }
-                }
+    stage('Setup Environment') {
+    steps {
+        script {
+            try {
+                sh '''
+                    # Ensure the apt lists directory exists and has the correct permissions
+                    sudo mkdir -p /var/lib/apt/lists/partial
+                    sudo chmod -R 755 /var/lib/apt/lists
+
+                    # Update package lists and install dependencies
+                    sudo apt-get update
+                    sudo apt-get install -y curl python3 python3-pip wget git
+
+                    # Ensure pip3 is available
+                    if ! command -v pip3 &> /dev/null; then
+                        echo "pip3 not found, installing..."
+                        sudo apt-get install -y python3-pip
+                    fi
+
+                    # Install Python dependencies
+                    pip3 install --user pyyaml requests
+                '''
+
+                sh '''
+                    mkdir -p ${WORKSPACE}/models
+                    mkdir -p ${WORKSPACE}/tmp
+                '''
+                echo "Environment setup completed successfully"
+            } catch (Throwable e) {
+                echo "Error during environment setup: ${e.message}"
+                error("Failed to setup environment. Stopping pipeline.")
             }
         }
+    }
+}
+
 
         stage('Checkout') {
             steps {
