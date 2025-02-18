@@ -48,25 +48,37 @@ pipeline {
         stage('Upload Model to MinIO') {
             steps {
                 script {
-                    def mcPath = '/usr/bin/mc'
-                    if (!fileExists(mcPath)) {
-                        error("Error: mc binary not found at ${mcPath}")
-                    }
-                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                        withEnv(["TERM=xterm", "MC_NO_COLOR=1"]) {
-                            sh """
-                                set -e  # Exit on error
-                                ${mcPath} alias set myminio ${MINIO_URL} "\$MINIO_ACCESS_KEY" "\$MINIO_SECRET_KEY" --quiet
-                                ${mcPath} cp -r "\${MODEL_NAME}" "myminio/${BUCKET_NAME}/"
-                            """
+                    try {
+                        def mcPath = '/usr/bin/mc'
+                        if (!fileExists(mcPath)) {
+                            error("Error: mc binary not found at ${mcPath}")
                         }
+        
+                        withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
+                            // Set environment variables for mc
+                            withEnv(["TERM=xterm", "MC_NO_COLOR=1"]) {
+                                sh """
+                                    set -e # Exit on error
+        
+                                    # More robust alias set
+                                    ${mcPath} alias set myminio ${MINIO_URL} "\$MINIO_ACCESS_KEY" "\$MINIO_SECRET_KEY" --quiet
+        
+                                    # Construct the full path to the model directory
+                                    def modelDir = "${WORKSPACE_DIR}/models/${env.MODEL_NAME}"
+        
+                                    # Quote the model directory path correctly
+                                    ${mcPath} cp -r "${modelDir}" "myminio/${BUCKET_NAME}/" 
+                                """
+                            }
+                        }
+                        echo "Model upload to MinIO successful" // Add success message
+                    } catch (Exception e) {
+                        echo "Error uploading to MinIO: ${e.message}"
+                        error("MinIO upload failed. Stopping pipeline.")
                     }
                 }
             }
         }
-
-        }
-
         stage('Build Docker Image') {
             steps {
                 script {
