@@ -60,6 +60,24 @@ pipeline {
             }
         }
         
+        stage('Install Hugging Face CLI') {
+            steps {
+                script {
+                    if (env.DRY_RUN.toBoolean()) {
+                        echo "[DRY RUN] Would install Hugging Face CLI"
+                    } else {
+                        try {
+                            sh """
+                                pip install --upgrade huggingface_hub
+                            """
+                        } catch (Exception e) {
+                            error("Failed to install Hugging Face CLI: ${e.getMessage()}")
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Download and Store Model') {
             steps {
                 script {
