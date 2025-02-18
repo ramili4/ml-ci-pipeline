@@ -9,15 +9,32 @@ pipeline {
         REGISTRY = "jfrog:8082/docker-local"
         JFROG_URL = "http://jfrog:8081/artifactory"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
-        MODEL_REPO = "prajjwal1/bert-tiny"  // Changed to smaller model
+        MODEL_REPO = "prajjwal1/bert-tiny"
     }
 
     stages {
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    try {
+                        sh '''
+                            apt-get update
+                            apt-get install -y wget curl
+                        '''
+                        echo "Successfully installed system dependencies"
+                    } catch (Exception e) {
+                        echo "Error installing dependencies: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Stopping pipeline due to dependency installation failure.")
+                    }
+                }
+            }
+        }
+
         stage('Read Model Config') {
             steps {
                 script {
                     try {
-                        // Parse the model-config.yaml from workspace
                         def modelConfig = readYaml file: 'model-config.yaml'
                         env.MODEL_NAME = modelConfig.model_name
                         echo "Successfully read model config. Model: ${env.MODEL_NAME}"
@@ -34,12 +51,8 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Create directory for model in workspace
                         sh 'mkdir -p bert-tiny'
-
-                        // Fetch the smaller model files
                         sh '''
-                            # Download model files
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
                                 -L https://huggingface.co/prajjwal1/bert-tiny/resolve/main/pytorch_model.bin \
                                 -o bert-tiny/pytorch_model.bin
@@ -68,7 +81,6 @@ pipeline {
                     script {
                         try {
                             sh '''
-                                # Install MinIO client
                                 wget https://dl.min.io/client/mc/release/linux-amd64/mc
                                 chmod +x mc
                                 ./mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
@@ -91,7 +103,6 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Build Docker image with the specified base image and other settings
                         sh """
                             docker build \
                                 --build-arg MINIO_URL=${MINIO_URL} \
@@ -134,7 +145,6 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Clean up local files and Docker images
                         sh """
                             rm -rf bert-tiny
                             docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
@@ -143,7 +153,6 @@ pipeline {
                         echo "Successfully cleaned up workspace"
                     } catch (Exception e) {
                         echo "Warning: Cleanup encountered issues: ${e.message}"
-                        // Don't fail the build for cleanup issues
                     }
                 }
             }
@@ -158,7 +167,7 @@ pipeline {
             echo "Pipeline failed! Check the logs for details."
         }
         always {
-            cleanWs() // Clean workspace
+            cleanWs()
         }
     }
 }
