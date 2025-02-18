@@ -2,111 +2,46 @@ pipeline {
     agent any
 
     environment {
-        MINIO_URL = "http://localhost:9000"
+        MINIO_URL = "http://minio:9000"
         BUCKET_NAME = "models"
         IMAGE_NAME = "my-app"
         IMAGE_TAG = "latest"
-        REGISTRY = "localhost:8082/artifactory/docker-local"
-        JFROG_URL = "http://localhost:8081/artifactory"
+        REGISTRY = "jfrog:8082/docker-local"
+        JFROG_URL = "http://jfrog:8081/artifactory"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
-        WORKSPACE_DIR = "${WORKSPACE}"
+        MODEL_REPO = "prajjwal1/bert-tiny"
     }
 
     stages {
-        stage('Setup Environment') {
+        stage('Install Dependencies') {
             steps {
                 script {
                     try {
                         sh '''
-                            sudo mkdir -p /var/lib/apt/lists/partial
-                            sudo chmod -R 755 /var/lib/apt/lists
-
-                            sudo rm -rf /var/lib/apt/lists/lock
-                            sudo rm -rf /var/cache/apt/archives/lock
-                            sudo rm -rf /var/lib/dpkg/lock*
-
-                            sudo apt-get update || sudo apt-get update --fix-missing
-                            sudo apt-get install -y python3 python3-pip
-
-                            if ! command -v pip3 &> /dev/null; then
-                                sudo apt-get install -y python3-pip
-                            fi
-
-                            pip3 install --user pyyaml requests
-                            python3 --version
-                            pip3 --version
+                            apt-get update
+                            apt-get install -y wget curl
                         '''
-                        echo "Environment setup completed successfully"
-                    } catch (Throwable e) {
-                        echo "Error during environment setup: ${e.message}"
-                        error("Failed to setup environment. Stopping pipeline.")
+                        echo "Successfully installed system dependencies"
+                    } catch (Exception e) {
+                        echo "Error installing dependencies: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Stopping pipeline due to dependency installation failure.")
                     }
                 }
             }
         }
 
-        stage('Checkout') {
+        stage('Read Model Config') {
             steps {
                 script {
                     try {
-                        checkout scm
-                        echo "Repository checkout successful"
-                    } catch (Throwable e) {
-                        echo "Error during repository checkout: ${e.message}"
-                        error("Failed to checkout repository. Stopping pipeline.")
-                    }
-                }
-            }
-        }
-
-        stage('Validate Config') {
-            steps {
-                script {
-                    try {
-                        if (!fileExists('model-config.yaml')) {
-                            error("model-config.yaml not found in repository")
-                        }
-
                         def modelConfig = readYaml file: 'model-config.yaml'
-                        def requiredFields = ['model_name', 'huggingface_repo', 'model_files']
-
-                        requiredFields.each { field ->
-                            if (!modelConfig[field]) {
-                                error("Missing required field in config: ${field}")
-                            }
-                        }
-
                         env.MODEL_NAME = modelConfig.model_name
-                        env.MODEL_REPO = modelConfig.huggingface_repo
-                        env.MODEL_FILES = modelConfig.model_files.join(' ')
-
-                        echo "Config validation successful"
-                    } catch (Throwable e) {
-                        echo "Error during config validation: ${e.message}"
-                        error("Config validation failed. Stopping pipeline.")
-                    }
-                }
-            }
-        }
-
-        stage('Check Model Directory') {
-            steps {
-                script {
-                    try {
-                        def modelDir = "${WORKSPACE}/models/${env.MODEL_NAME}"
-                        if (!fileExists(modelDir)) {
-                            sh "mkdir -p ${modelDir}"
-                            echo "Model directory created."
-                        } else {
-                            def modelDirEmpty = sh(script: "ls -A ${modelDir} | wc -l", returnStdout: true).trim() == "0"
-                            if (!modelDirEmpty) {
-                                sh "rm -rf ${modelDir}/*"
-                                echo "Model directory cleaned."
-                            }
-                        }
-                    } catch (Throwable e) {
-                        echo "Error handling model directory: ${e.message}"
-                        error("Failed to prepare model directory. Stopping pipeline.")
+                        echo "Successfully read model config. Model: ${env.MODEL_NAME}"
+                    } catch (Exception e) {
+                        echo "Error reading model config: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Stopping pipeline due to config read failure.")
                     }
                 }
             }
@@ -117,31 +52,111 @@ pipeline {
                 script {
                     try {
                         def modelConfig = readYaml file: 'model-config.yaml'
-                        def modelDir = "${WORKSPACE}/models/${env.MODEL_NAME}"
-                        def successCount = 0
-                        def totalFiles = modelConfig.model_files.size()
+                        def modelName = modelConfig.model_name // Dynamically fetch model name from config
 
-                        modelConfig.model_files.each { file ->
-                            def status = sh(script: """
-                                curl -f -s -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                    -L https://huggingface.co/${env.MODEL_REPO}/resolve/main/${file} \
-                                    -o ${modelDir}/${file}
-                            """, returnStatus: true)
+                        sh "mkdir -p ${modelName}"
+                        sh """
+                            curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
+                                -L https://huggingface.co/${modelName}/resolve/main/pytorch_model.bin \
+                                -o ${modelName}/pytorch_model.bin
+                            
+                            curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
+                                -L https://huggingface.co/${modelName}/resolve/main/config.json \
+                                -o ${modelName}/config.json
+                            
+                            curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
+                                -L https://huggingface.co/${modelName}/resolve/main/vocab.txt \
+                                -o ${modelName}/vocab.txt
+                        """
+                        echo "Successfully downloaded ${modelName} model from Hugging Face"
+                    } catch (Exception e) {
+                        echo "Error fetching model from Hugging Face: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Stopping pipeline due to model fetch failure.")
+                    }
+                }
+            }
+        }
 
-                            if (status == 0) {
-                                successCount++
-                                echo "Successfully downloaded ${file}"
-                            } else {
-                                echo "Failed to download ${file}"
-                            }
+        stage('Upload Model to MinIO') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
+                    script {
+                        try {
+                            // Use curl to download mc (MinIO client)
+                            sh '''
+                                curl -O https://dl.min.io/client/mc/release/linux-amd64/mc
+                                chmod +x mc
+                                ./mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
+                                ./mc mb myminio/${BUCKET_NAME} || true
+                                ./mc cp -r ${modelName} myminio/${BUCKET_NAME}/
+                                rm mc
+                            '''
+                            echo "Successfully uploaded model to MinIO"
+                        } catch (Exception e) {
+                            echo "Error uploading model to MinIO: ${e.message}"
+                            currentBuild.result = 'FAILURE'
+                            error("Stopping pipeline due to model upload failure.")
                         }
+                    }
+                }
+            }
+        }
 
-                        if (successCount != totalFiles) {
-                            error("Some model files failed to download. Downloaded: ${successCount}/${totalFiles}")
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    try {
+                        sh """
+                            docker build \
+                                --build-arg MINIO_URL=${MINIO_URL} \
+                                --build-arg BUCKET_NAME=${BUCKET_NAME} \
+                                --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                                -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                        """
+                        echo "Successfully built Docker image"
+                    } catch (Exception e) {
+                        echo "Error building Docker image: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Stopping pipeline due to Docker image build failure.")
+                    }
+                }
+            }
+        }
+
+        stage('Tag and Push Image to JFrog') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'jfrog-credentials', usernameVariable: 'JFROG_USER', passwordVariable: 'JFROG_PASSWORD')]) {
+                    script {
+                        try {
+                            sh """
+                                docker login -u $JFROG_USER -p $JFROG_PASSWORD ${REGISTRY}
+                                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                                docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                            """
+                            echo "Successfully pushed image to JFrog"
+                        } catch (Exception e) {
+                            echo "Error tagging and pushing image to JFrog: ${e.message}"
+                            currentBuild.result = 'FAILURE'
+                            error("Stopping pipeline due to JFrog image push failure.")
                         }
-                    } catch (Throwable e) {
-                        echo "Error downloading model files: ${e.message}"
-                        error("Model download failed. Stopping pipeline.")
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                script {
+                    try {
+                        sh """
+                            rm -rf ${modelName}
+                            docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
+                            docker rmi ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true
+                        """
+                        echo "Successfully cleaned up workspace"
+                    } catch (Exception e) {
+                        echo "Warning: Cleanup encountered issues: ${e.message}"
                     }
                 }
             }
@@ -150,10 +165,13 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline completed successfully!"
+            echo "Pipeline executed successfully!"
         }
         failure {
             echo "Pipeline failed! Check the logs for details."
+        }
+        always {
+            cleanWs()
         }
     }
 }
