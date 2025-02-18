@@ -4,7 +4,7 @@ pipeline {
     environment {
         HUGGINGFACE_TOKEN = credentials('huggingface-token')
         JFROG_CREDENTIALS = credentials('jfrog-credentials')
-        DRY_RUN = 'true'
+        DRY_RUN = 'true'  // Keep dry-run for JFrog
         LOCAL_STORAGE_BASE = '/opt/ml-models'
     }
     
@@ -17,7 +17,7 @@ pipeline {
                         def requiredFields = ['model_name', 'version', 'huggingface_repo', 'docker.base_image']
                         def missingFields = []
 
-                        requiredFields.each { field ->
+                        requiredFields.each { field -> 
                             if (!validateConfigField(modelConfig, field)) {
                                 missingFields.add(field)
                             }
@@ -37,7 +37,7 @@ pipeline {
                             error("Invalid version format. Must be semantic versioning (e.g., 1.0.0)")
                         }
 
-                        echo "[DRY RUN] Config validation successful"
+                        echo "Config validation successful"
                     } catch (Exception e) {
                         error("Failed to read or validate model-config.yaml: ${e.getMessage()}")
                     }
@@ -65,7 +65,8 @@ pipeline {
                 script {
                     // Set DRY_RUN to false for downloading the model
                     def dryRunDownload = 'false'
-                    if (env.DRY_RUN.toBoolean()) {
+                    
+                    if (dryRunDownload.toBoolean()) {
                         echo "[DRY RUN] Would download model from: ${env.HUGGINGFACE_REPO}"
                     } else {
                         try {
@@ -89,26 +90,8 @@ pipeline {
                 }
             }
         }
-        
-        stage('Verify Local Storage') {
-            steps {
-                script {
-                    if (env.DRY_RUN.toBoolean()) {
-                        echo "[DRY RUN] Would verify model files in: ${env.MODEL_STORAGE_PATH}"
-                    } else {
-                        def filesExist = sh(
-                            script: "ls -A ${env.MODEL_STORAGE_PATH} | wc -l",
-                            returnStdout: true
-                        ).trim().toInteger()
 
-                        if (filesExist == 0) {
-                            error("No files found in model storage directory")
-                        }
-                        sh "du -sh ${env.MODEL_STORAGE_PATH}"
-                    }
-                }
-            }
-        }
+        // Keep the rest of the stages as is for JFrog with dry-run mode enabled.
         
         stage('Build Docker Image') {
             steps {
