@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        HUGGINGFACE_TOKEN = credentials('huggingface-token') 
+        HUGGINGFACE_TOKEN = credentials('huggingface-token')  // Make sure to store the token in Jenkins credentials
         MODEL_DIR = '/opt/ml-models/bert-sentiment/1.0.0'
     }
 
@@ -56,8 +56,8 @@ pipeline {
         stage('Download and Store Model') {
             steps {
                 script {
-                    // Download the model using Hugging Face CLI inside the venv
-                    echo "Downloading model..."
+                    // Ensure the virtual environment is activated before running the command
+                    echo "Downloading model using Hugging Face CLI..."
                     sh '. /opt/ml-pipeline/venv/bin/activate && huggingface-cli download nlptown/bert-base-multilingual-uncased-sentiment --token ${HUGGINGFACE_TOKEN} --local-dir ${MODEL_DIR}'
                 }
             }
