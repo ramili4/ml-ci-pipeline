@@ -2,12 +2,14 @@ pipeline {
     agent any
 
     environment {
-        HUGGINGFACE_TOKEN = credentials('huggingface-token')  // Make sure to store the token in Jenkins credentials
-        MODEL_DIR = '/opt/ml-models/bert-sentiment/1.0.0'
+        HUGGINGFACE_TOKEN = credentials('huggingface-token')  // Stored in Jenkins credentials
+        MODEL_DIR = '~/mock-storage/minio/models/bert-sentiment/1.0.0'
+        MOCK_DOCKER_DIR = '~/mock-storage/jfrog/docker-images'
+        VENV_DIR = '~/mock-storage/ml-pipeline/venv'
     }
 
     stages {
-        stage('Declarative: Checkout SCM') {
+        stage('Checkout Code') {
             steps {
                 checkout scm
             }
@@ -22,23 +24,23 @@ pipeline {
             }
         }
 
-        stage('Initialize Local Storage') {
+        stage('Setup Mock Storage') {
             steps {
                 script {
-                    echo "[DRY RUN] Would create storage directory: ${MODEL_DIR}"
-                    // Uncomment to actually create the directory
-                    // sh "mkdir -p ${MODEL_DIR}"
+                    echo "Creating mock directories..."
+                    sh "mkdir -p ${MODEL_DIR}"
+                    sh "mkdir -p ${MOCK_DOCKER_DIR}"
+                    sh "mkdir -p ${VENV_DIR}"
                 }
             }
         }
 
-        stage('Set Up Python Virtual Environment') {
+        stage('Setup Python Virtual Environment') {
             steps {
                 script {
-                    // Create and activate the Python virtual environment
                     echo "Setting up Python virtual environment..."
-                    sh 'python3 -m venv /opt/ml-pipeline/venv'
-                    sh '. /opt/ml-pipeline/venv/bin/activate && pip install --upgrade pip'
+                    sh "python3 -m venv ${VENV_DIR}"
+                    sh ". ${VENV_DIR}/bin/activate && pip install --upgrade pip"
                 }
             }
         }
@@ -46,19 +48,20 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 script {
-                    // Install Hugging Face CLI in the virtual environment
                     echo "Installing Hugging Face CLI..."
-                    sh '. /opt/ml-pipeline/venv/bin/activate && pip install huggingface_hub'
+                    sh ". ${VENV_DIR}/bin/activate && pip install huggingface_hub"
                 }
             }
         }
 
-        stage('Download and Store Model') {
+        stage('Download and Store Model (Simulated MinIO)') {
             steps {
                 script {
-                    // Ensure the virtual environment is activated before running the command
                     echo "Downloading model using Hugging Face CLI..."
-                    sh '. /opt/ml-pipeline/venv/bin/activate && huggingface-cli download nlptown/bert-base-multilingual-uncased-sentiment --token ${HUGGINGFACE_TOKEN} --local-dir ${MODEL_DIR}'
+                    sh ". ${VENV_DIR}/bin/activate && huggingface-cli download nlptown/bert-base-multilingual-uncased-sentiment --token ${HUGGINGFACE_TOKEN} --local-dir ${MODEL_DIR}"
+
+                    echo "[DRY RUN] Simulating MinIO upload..."
+                    sh "ls -l ${MODEL_DIR}"  // List files to confirm
                 }
             }
         }
@@ -72,28 +75,14 @@ pipeline {
             }
         }
 
-        stage('Push to JFrog Artifactory') {
+        stage('Push to JFrog (Simulated)') {
             steps {
                 script {
-                    echo "Pushing image to JFrog..."
-                    withCredentials([usernamePassword(credentialsId: 'jfrog-credentials', usernameVariable: 'JFROG_USER', passwordVariable: 'JFROG_PASS')]) {
-                        sh "docker login -u $JFROG_USER -p $JFROG_PASS my-artifactory.com"
-                        sh "docker push my-artifactory.com/my-docker-image:${BUILD_NUMBER}"
-                    }
+                    echo "[DRY RUN] Would push to JFrog: my-docker-image:${BUILD_NUMBER}"
+                    sh "cp -r ./docker-build ${MOCK_DOCKER_DIR}/"
+                    sh "ls -l ${MOCK_DOCKER_DIR}"  // Verify the mock push
                 }
             }
-        }
-
-        stage('Declarative: Post Actions') {
-            steps {
-                cleanWs() // Clean workspace after build
-            }
-        }
-    }
-
-    post {
-        failure {
-            echo 'Pipeline failed! Check the logs for details.'
         }
     }
 }
