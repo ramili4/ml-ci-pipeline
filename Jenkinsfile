@@ -17,13 +17,20 @@ pipeline {
         script {
             try {
                 sh '''
-                    # Ensure the apt lists directory exists and has the correct permissions
+                    # Ensure the apt lists directory exists and fix permissions
                     sudo mkdir -p /var/lib/apt/lists/partial
                     sudo chmod -R 755 /var/lib/apt/lists
 
-                    # Update package lists and install dependencies
-                    sudo apt-get update
-                    sudo apt-get install -y curl python3 python3-pip wget git
+                    # Fix any locked apt processes before updating
+                    sudo rm -rf /var/lib/apt/lists/lock
+                    sudo rm -rf /var/cache/apt/archives/lock
+                    sudo rm -rf /var/lib/dpkg/lock*
+
+                    # Update package lists
+                    sudo apt-get update || sudo apt-get update --fix-missing
+
+                    # Install Python and pip
+                    sudo apt-get install -y python3 python3-pip
 
                     # Ensure pip3 is available
                     if ! command -v pip3 &> /dev/null; then
@@ -33,11 +40,10 @@ pipeline {
 
                     # Install Python dependencies
                     pip3 install --user pyyaml requests
-                '''
 
-                sh '''
-                    mkdir -p ${WORKSPACE}/models
-                    mkdir -p ${WORKSPACE}/tmp
+                    # Verify installation
+                    python3 --version
+                    pip3 --version
                 '''
                 echo "Environment setup completed successfully"
             } catch (Throwable e) {
