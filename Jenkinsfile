@@ -3,9 +3,9 @@ pipeline {
 
     environment {
         HUGGINGFACE_TOKEN = credentials('huggingface-token')
-        MODEL_DIR = '/home/jenkins/mock-storage/minio/models/bert-sentiment/1.0.0' // Use the path inside the container
-        MOCK_DOCKER_DIR = '/home/jenkins/mock-storage/jfrog/docker-images' // Use the path inside the container
-        VENV_DIR = '/home/jenkins/mock-storage/ml-pipeline/venv'
+        MODEL_DIR = '/opt/ml-models' // Use the path inside the container
+        MOCK_DOCKER_DIR = '/opt/ml-models/docker-images' // Use the path inside the container
+        VENV_DIR = '/opt/ml-models/venv'
     }
 
     stages {
