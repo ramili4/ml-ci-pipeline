@@ -58,26 +58,24 @@ pipeline {
         }
 
         stage('Upload Model to MinIO') {
-    steps {
-        script {
-            def mcPath = '/usr/bin/mc'
+            steps {
+                script {
+                    def mcPath = '/usr/bin/mc'
 
-            // Ensure mc exists before running the command
-            if (fileExists(mcPath)) {
-                withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                    sh """
-                        ${mcPath} alias set myminio http://minio:9000 admin \$MINIO_SECRET_KEY
-                        ${mcPath} cp model.onnx myminio/models/
-                    """
+                    if (!fileExists(mcPath)) {
+                        error("Error: mc binary not found at ${mcPath}")
+                    }
+
+                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
+                        sh """
+                            ${mcPath} alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
+                            ${mcPath} cp -r ${MODEL_NAME} myminio/${BUCKET_NAME}/
+                        """
+                        echo "Model successfully uploaded to MinIO."
+                    }
                 }
-            } else {
-                error("Error: mc binary not found at ${mcPath}")
             }
         }
-    }
-}
-
-
 
         stage('Build Docker Image') {
             steps {
