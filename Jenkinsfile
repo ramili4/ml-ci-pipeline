@@ -2,8 +2,7 @@ pipeline {
     agent any
 
     environment {
-        // Define your credentials and model directory paths as environment variables
-        HUGGINGFACE_TOKEN = credentials('huggingface-token')  // Make sure to store the token in Jenkins credentials
+        HUGGINGFACE_TOKEN = credentials('huggingface-token') 
         MODEL_DIR = '/opt/ml-models/bert-sentiment/1.0.0'
     }
 
@@ -17,7 +16,6 @@ pipeline {
         stage('Validate Model Config') {
             steps {
                 script {
-                    // Assuming you have a model config file that needs validation
                     def config = readYaml file: 'model-config.yaml'
                     echo "Config validation successful"
                 }
@@ -27,20 +25,30 @@ pipeline {
         stage('Initialize Local Storage') {
             steps {
                 script {
-                    // Create directory for storing model, dry-run for now
                     echo "[DRY RUN] Would create storage directory: ${MODEL_DIR}"
-                    // Uncomment this line when ready to actually create the directory
+                    // Uncomment to actually create the directory
                     // sh "mkdir -p ${MODEL_DIR}"
                 }
             }
         }
 
-        stage('Install Hugging Face CLI') {
+        stage('Set Up Python Virtual Environment') {
             steps {
                 script {
-                    // Install Hugging Face CLI tool
+                    // Create and activate the Python virtual environment
+                    echo "Setting up Python virtual environment..."
+                    sh 'python3 -m venv /opt/ml-pipeline/venv'
+                    sh '. /opt/ml-pipeline/venv/bin/activate && pip install --upgrade pip'
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    // Install Hugging Face CLI in the virtual environment
                     echo "Installing Hugging Face CLI..."
-                    sh 'pip install --upgrade huggingface_hub'
+                    sh '. /opt/ml-pipeline/venv/bin/activate && pip install huggingface_hub'
                 }
             }
         }
@@ -48,9 +56,9 @@ pipeline {
         stage('Download and Store Model') {
             steps {
                 script {
-                    // Download model using Hugging Face CLI
+                    // Download the model using Hugging Face CLI inside the venv
                     echo "Downloading model..."
-                    sh "huggingface-cli download nlptown/bert-base-multilingual-uncased-sentiment --token ${HUGGINGFACE_TOKEN} --local-dir ${MODEL_DIR}"
+                    sh '. /opt/ml-pipeline/venv/bin/activate && huggingface-cli download nlptown/bert-base-multilingual-uncased-sentiment --token ${HUGGINGFACE_TOKEN} --local-dir ${MODEL_DIR}'
                 }
             }
         }
@@ -58,7 +66,6 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Build Docker image with the model
                     echo "Building Docker image..."
                     sh "docker build -t my-docker-image:${BUILD_NUMBER} ."
                 }
@@ -68,7 +75,6 @@ pipeline {
         stage('Push to JFrog Artifactory') {
             steps {
                 script {
-                    // Push the Docker image to JFrog Artifactory
                     echo "Pushing image to JFrog..."
                     withCredentials([usernamePassword(credentialsId: 'jfrog-credentials', usernameVariable: 'JFROG_USER', passwordVariable: 'JFROG_PASS')]) {
                         sh "docker login -u $JFROG_USER -p $JFROG_PASS my-artifactory.com"
