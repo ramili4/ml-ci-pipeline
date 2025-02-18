@@ -8,7 +8,7 @@ pipeline {
         IMAGE_TAG = "latest"
         REGISTRY = "jfrog:8082/docker-local"
         JFROG_URL = "http://jfrog:8081/artifactory"
-        HUGGINGFACE_API_TOKEN = credentials('huggingface-api-token') // Assuming Hugging Face token is in Jenkins credentials
+        HUGGINGFACE_API_TOKEN = credentials('huggingface-token') // Assuming Hugging Face token is in Jenkins credentials
     }
 
     stages {
