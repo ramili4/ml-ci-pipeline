@@ -1,15 +1,5 @@
 pipeline {
-    agent {
-        docker {
-            image 'docker:dind'
-            args '''
-                -v /var/run/docker.sock:/var/run/docker.sock
-                -v ${WORKSPACE}:/workspace
-                --group-add $(getent group docker | cut -d: -f3)
-                -e DOCKER_HOST=unix:///var/run/docker.sock
-            '''
-        }
-    }
+    agent any
 
     environment {
         MINIO_URL = "http://localhost:9000"
