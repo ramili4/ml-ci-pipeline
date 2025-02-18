@@ -9,35 +9,17 @@ pipeline {
         REGISTRY = "jfrog:8082/docker-local"
         JFROG_URL = "http://jfrog:8081/artifactory"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
-        MODEL_REPO = "prajjwal1/bert-tiny"
+        MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"  // Smallest model
     }
 
     stages {
-        stage('Install Dependencies') {
-            steps {
-                script {
-                    try {
-                        sh '''
-                            apt-get update
-                            apt-get install -y wget curl
-                        '''
-                        echo "Successfully installed system dependencies"
-                    } catch (Exception e) {
-                        echo "Error installing dependencies: ${e.message}"
-                        currentBuild.result = 'FAILURE'
-                        error("Stopping pipeline due to dependency installation failure.")
-                    }
-                }
-            }
-        }
-
         stage('Read Model Config') {
             steps {
                 script {
                     try {
                         def modelConfig = readYaml file: 'model-config.yaml'
-                        env.MODEL_NAME = modelConfig.model_name
-                        echo "Successfully read model config. Model: ${env.MODEL_NAME}"
+                        env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
+                        echo "Using model: ${env.MODEL_NAME}"
                     } catch (Exception e) {
                         echo "Error reading model config: ${e.message}"
                         currentBuild.result = 'FAILURE'
@@ -51,26 +33,23 @@ pipeline {
             steps {
                 script {
                     try {
-                        def modelConfig = readYaml file: 'model-config.yaml'
-                        def modelName = modelConfig.model_name // Dynamically fetch model name from config
-
-                        sh "mkdir -p ${modelName}"
                         sh """
+                            mkdir -p ${MODEL_NAME}
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/${modelName}/resolve/main/pytorch_model.bin \
-                                -o ${modelName}/pytorch_model.bin
+                                -L https://huggingface.co/${MODEL_REPO}/resolve/main/pytorch_model.bin \
+                                -o ${MODEL_NAME}/pytorch_model.bin
                             
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/${modelName}/resolve/main/config.json \
-                                -o ${modelName}/config.json
+                                -L https://huggingface.co/${MODEL_REPO}/resolve/main/config.json \
+                                -o ${MODEL_NAME}/config.json
                             
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/${modelName}/resolve/main/vocab.txt \
-                                -o ${modelName}/vocab.txt
+                                -L https://huggingface.co/${MODEL_REPO}/resolve/main/vocab.txt \
+                                -o ${MODEL_NAME}/vocab.txt
                         """
-                        echo "Successfully downloaded ${modelName} model from Hugging Face"
+                        echo "Successfully downloaded model: ${MODEL_NAME}"
                     } catch (Exception e) {
-                        echo "Error fetching model from Hugging Face: ${e.message}"
+                        echo "Error fetching model: ${e.message}"
                         currentBuild.result = 'FAILURE'
                         error("Stopping pipeline due to model fetch failure.")
                     }
@@ -79,26 +58,25 @@ pipeline {
         }
 
         stage('Upload Model to MinIO') {
-    steps {
-        withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-            script {
-                try {
-                    sh """
-                        /var/lib/jenkins/mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
-                        /var/lib/jenkins/mc mb myminio/${BUCKET_NAME} || true
-                        /var/lib/jenkins/mc cp -r ${modelName} myminio/${BUCKET_NAME}/
-                    """
-                    echo "Successfully uploaded model to MinIO"
-                } catch (Exception e) {
-                    echo "Error uploading model to MinIO: ${e.message}"
-                    currentBuild.result = 'FAILURE'
-                    error("Stopping pipeline due to model upload failure.")
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
+                    script {
+                        try {
+                            sh """
+                                /var/lib/jenkins/mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
+                                /var/lib/jenkins/mc mb myminio/${BUCKET_NAME} || true
+                                /var/lib/jenkins/mc cp -r ${MODEL_NAME} myminio/${BUCKET_NAME}/
+                            """
+                            echo "Successfully uploaded model to MinIO"
+                        } catch (Exception e) {
+                            echo "Error uploading model: ${e.message}"
+                            currentBuild.result = 'FAILURE'
+                            error("Stopping pipeline due to model upload failure.")
+                        }
+                    }
                 }
             }
         }
-    }
-}
-
 
         stage('Build Docker Image') {
             steps {
@@ -108,7 +86,7 @@ pipeline {
                             docker build \
                                 --build-arg MINIO_URL=${MINIO_URL} \
                                 --build-arg BUCKET_NAME=${BUCKET_NAME} \
-                                --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                                --build-arg MODEL_NAME=${MODEL_NAME} \
                                 -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         """
                         echo "Successfully built Docker image"
@@ -133,9 +111,9 @@ pipeline {
                             """
                             echo "Successfully pushed image to JFrog"
                         } catch (Exception e) {
-                            echo "Error tagging and pushing image to JFrog: ${e.message}"
+                            echo "Error pushing image to JFrog: ${e.message}"
                             currentBuild.result = 'FAILURE'
-                            error("Stopping pipeline due to JFrog image push failure.")
+                            error("Stopping pipeline due to image push failure.")
                         }
                     }
                 }
@@ -147,7 +125,7 @@ pipeline {
                 script {
                     try {
                         sh """
-                            rm -rf ${modelName}
+                            rm -rf ${MODEL_NAME}
                             docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
                             docker rmi ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true
                         """
