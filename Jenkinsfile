@@ -28,9 +28,9 @@ pipeline {
             steps {
                 script {
                     echo "Creating mock directories..."
-                    sh "mkdir -p ${MODEL_DIR}"
-                    sh "mkdir -p ${MOCK_DOCKER_DIR}"
-                    sh "mkdir -p ${VENV_DIR}"
+                    sh "sudo mkdir -p ${MODEL_DIR}"
+                    sh "sudo mkdir -p ${MOCK_DOCKER_DIR}"
+                    sh "sudo mkdir -p ${VENV_DIR}"
                 }
             }
         }
@@ -39,7 +39,7 @@ pipeline {
             steps {
                 script {
                     echo "Setting up Python virtual environment..."
-                    sh "python3 -m venv ${VENV_DIR}"
+                    sh "sudo python3 -m venv ${VENV_DIR}"
                     sh ". ${VENV_DIR}/bin/activate && pip install --upgrade pip"
                 }
             }
