@@ -18,8 +18,8 @@ pipeline {
                 script {
                     try {
                         sh '''
-                            apt-get update
-                            apt-get install -y wget curl
+                            sudo apt-get update
+                            sudo apt-get install -y wget curl
                         '''
                         echo "Successfully installed system dependencies"
                     } catch (Exception e) {
@@ -51,24 +51,21 @@ pipeline {
             steps {
                 script {
                     try {
-                        def modelConfig = readYaml file: 'model-config.yaml'
-                        def modelName = modelConfig.model_name // Dynamically fetch model name from config
-
-                        sh "mkdir -p ${modelName}"
+                        sh "mkdir -p ${env.MODEL_NAME}"
                         sh """
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/${modelName}/resolve/main/pytorch_model.bin \
-                                -o ${modelName}/pytorch_model.bin
+                                -L https://huggingface.co/${env.MODEL_NAME}/resolve/main/pytorch_model.bin \
+                                -o ${env.MODEL_NAME}/pytorch_model.bin
                             
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/${modelName}/resolve/main/config.json \
-                                -o ${modelName}/config.json
+                                -L https://huggingface.co/${env.MODEL_NAME}/resolve/main/config.json \
+                                -o ${env.MODEL_NAME}/config.json
                             
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/${modelName}/resolve/main/vocab.txt \
-                                -o ${modelName}/vocab.txt
+                                -L https://huggingface.co/${env.MODEL_NAME}/resolve/main/vocab.txt \
+                                -o ${env.MODEL_NAME}/vocab.txt
                         """
-                        echo "Successfully downloaded ${modelName} model from Hugging Face"
+                        echo "Successfully downloaded ${env.MODEL_NAME} model from Hugging Face"
                     } catch (Exception e) {
                         echo "Error fetching model from Hugging Face: ${e.message}"
                         currentBuild.result = 'FAILURE'
@@ -83,13 +80,12 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
                     script {
                         try {
-                            // Use curl to download mc (MinIO client)
                             sh '''
                                 curl -O https://dl.min.io/client/mc/release/linux-amd64/mc
                                 chmod +x mc
                                 ./mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
                                 ./mc mb myminio/${BUCKET_NAME} || true
-                                ./mc cp -r ${modelName} myminio/${BUCKET_NAME}/
+                                ./mc cp -r ${env.MODEL_NAME} myminio/${BUCKET_NAME}/
                                 rm mc
                             '''
                             echo "Successfully uploaded model to MinIO"
@@ -150,7 +146,7 @@ pipeline {
                 script {
                     try {
                         sh """
-                            rm -rf ${modelName}
+                            rm -rf ${env.MODEL_NAME}
                             docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
                             docker rmi ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true
                         """
