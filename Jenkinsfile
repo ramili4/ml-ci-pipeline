@@ -11,15 +11,22 @@ pipeline {
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token') // Assuming Hugging Face token is in Jenkins credentials
     }
 
-    stages {
-        stage('Clone Repository') {
-            steps {
-                script {
-                    // Clone the repository containing the Jenkinsfile and model-config.yaml
-                    sh 'git clone https://github.com/ramili4/ml-ci-pipeline.git /tmp/ml-ci-pipeline'
-                }
+    stage('Clone Repository') {
+    steps {
+        script {
+            // Check if the directory exists
+            if (fileExists('/tmp/ml-ci-pipeline')) {
+                echo 'Directory /tmp/ml-ci-pipeline already exists. Cleaning up before cloning.'
+                // Clean the existing directory
+                sh 'rm -rf /tmp/ml-ci-pipeline'
             }
+            
+            // Clone the repository
+            sh 'git clone https://github.com/ramili4/ml-ci-pipeline.git /tmp/ml-ci-pipeline'
         }
+    }
+}
+
 
         stage('Read Model Config') {
             steps {
