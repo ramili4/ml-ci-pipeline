@@ -58,27 +58,20 @@ pipeline {
         }
 
         stage('Upload Model to MinIO') {
-    withCredentials([string(credentialsId: 'MINIO_SECRET_KEY', variable: 'MINIO_SECRET_KEY')]) {
+    steps {
         script {
-            def mcPath = '/var/lib/jenkins/mc'
-            
-            // Ensure `mc` is available and executable
-            if (fileExists(mcPath)) {
-                sh "echo '✔ mc found at ${mcPath}'"
-                
-                def isExecutable = sh(script: "[ -x ${mcPath} ] && echo 'yes' || echo 'no'", returnStdout: true).trim()
-                
-                if (isExecutable == 'no') {
-                    sh "echo 'Making mc executable...'; chmod +x ${mcPath}"
-                }
-                
-                // Set MinIO alias
-                sh "${mcPath} alias set myminio http://minio:9000 admin $MINIO_SECRET_KEY"
+            def mcPath = '/usr/bin/mc'
 
-                // Upload model to MinIO
-                sh "${mcPath} cp /path/to/model myminio/models/"
+            // Ensure mc exists before running the command
+            if (fileExists(mcPath)) {
+                withCredentials([string(credentialsId: 'minio-secret-key', variable: 'MINIO_SECRET_KEY')]) {
+                    sh """
+                        ${mcPath} alias set myminio http://minio:9000 admin \$MINIO_SECRET_KEY
+                        ${mcPath} cp model.onnx myminio/models/
+                    """
+                }
             } else {
-                error "❌ mc not found at ${mcPath}, upload failed!"
+                error("Error: mc binary not found at ${mcPath}")
             }
         }
     }
