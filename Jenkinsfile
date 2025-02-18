@@ -58,26 +58,32 @@ pipeline {
         }
 
         stage('Upload Model to MinIO') {
-    steps {
-        withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-            script {
-                try {
-                    sh '''
-                        chmod +x /var/lib/jenkins/mc
-                        /var/lib/jenkins/mc alias set myminio "$MINIO_URL" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
-                        /var/lib/jenkins/mc mb myminio/"$BUCKET_NAME" || true
-                        /var/lib/jenkins/mc cp -r "$MODEL_NAME" myminio/"$BUCKET_NAME"/
-                    '''
-                    echo "Successfully uploaded model to MinIO"
-                } catch (Exception e) {
-                    echo "Error uploading model: ${e.message}"
-                    currentBuild.result = 'FAILURE'
-                    error("Stopping pipeline due to model upload failure.")
+    withCredentials([string(credentialsId: 'MINIO_SECRET_KEY', variable: 'MINIO_SECRET_KEY')]) {
+        script {
+            def mcPath = '/var/lib/jenkins/mc'
+            
+            // Ensure `mc` is available and executable
+            if (fileExists(mcPath)) {
+                sh "echo '✔ mc found at ${mcPath}'"
+                
+                def isExecutable = sh(script: "[ -x ${mcPath} ] && echo 'yes' || echo 'no'", returnStdout: true).trim()
+                
+                if (isExecutable == 'no') {
+                    sh "echo 'Making mc executable...'; chmod +x ${mcPath}"
                 }
+                
+                // Set MinIO alias
+                sh "${mcPath} alias set myminio http://minio:9000 admin $MINIO_SECRET_KEY"
+
+                // Upload model to MinIO
+                sh "${mcPath} cp /path/to/model myminio/models/"
+            } else {
+                error "❌ mc not found at ${mcPath}, upload failed!"
             }
         }
     }
 }
+
 
 
         stage('Build Docker Image') {
