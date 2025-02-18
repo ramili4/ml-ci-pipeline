@@ -50,7 +50,7 @@ pipeline {
                     } catch (Exception e) {
                         echo "Error reading model config: ${e.message}"
                         currentBuild.result = 'FAILURE'
-                        error("Stopping pipeline due to config file read failure.")
+                        error("Stopping pipeline due to config read failure.")
                     }
                 }
             }
@@ -88,7 +88,7 @@ pipeline {
                         } catch (Exception e) {
                             echo "Error uploading model to MinIO: ${e.message}"
                             currentBuild.result = 'FAILURE'
-                            error("Stopping pipeline due to MinIO upload failure.")
+                            error("Stopping pipeline due to model upload failure.")
                         }
                     }
                 }
@@ -121,9 +121,9 @@ pipeline {
                                 docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
                             """
                         } catch (Exception e) {
-                            echo "Error tagging or pushing Docker image to JFrog: ${e.message}"
+                            echo "Error tagging and pushing image to JFrog: ${e.message}"
                             currentBuild.result = 'FAILURE'
-                            error("Stopping pipeline due to JFrog push failure.")
+                            error("Stopping pipeline due to JFrog image push failure.")
                         }
                     }
                 }
