@@ -12,31 +12,30 @@ pipeline {
         WORKSPACE_DIR = "${WORKSPACE}"
     }
 
-    stages {
-        stage('Setup Environment') {
-            steps {
-                script {
-                    try {
-                        // Install required packages
-                        sh '''
-                            apk update
-                            apk add --no-cache curl python3 py3-pip wget git
-                            pip3 install pyyaml requests
-                        '''
-                        
-                        // Create necessary directories
-                        sh '''
-                            mkdir -p ${WORKSPACE_DIR}/models
-                            mkdir -p ${WORKSPACE_DIR}/tmp
-                        '''
-                        echo "Environment setup completed successfully"
-                    } catch (Exception e) {
-                        echo "Error during environment setup: ${e.message}"
-                        error("Failed to setup environment. Stopping pipeline.")
-                    }
-                }
+  stage('Setup Environment') {
+    steps {
+        script {
+            try {
+                sh '''
+                    apt-get update  # Update package lists
+                    apt-get install -y curl python3 py3-pip wget git  # Install packages
+                    pip3 install pyyaml requests
+                '''
+
+                // Create necessary directories (using consistent paths)
+                sh '''
+                    mkdir -p ${WORKSPACE_DIR}/models
+                    mkdir -p ${WORKSPACE_DIR}/tmp
+                '''
+
+                echo "Environment setup completed successfully"
+            } catch (Exception e) {
+                echo "Error during environment setup: ${e.message}"
+                error("Failed to setup environment. Stopping pipeline.")
             }
         }
+    }
+}
 
         stage('Checkout') {
             steps {
