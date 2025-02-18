@@ -51,21 +51,24 @@ pipeline {
             steps {
                 script {
                     try {
-                        sh 'mkdir -p bert-tiny'
-                        sh '''
+                        def modelConfig = readYaml file: 'model-config.yaml'
+                        def modelName = modelConfig.model_name // Dynamically fetch model name from config
+
+                        sh "mkdir -p ${modelName}"
+                        sh """
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/prajjwal1/bert-tiny/resolve/main/pytorch_model.bin \
-                                -o bert-tiny/pytorch_model.bin
+                                -L https://huggingface.co/${modelName}/resolve/main/pytorch_model.bin \
+                                -o ${modelName}/pytorch_model.bin
                             
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/prajjwal1/bert-tiny/resolve/main/config.json \
-                                -o bert-tiny/config.json
+                                -L https://huggingface.co/${modelName}/resolve/main/config.json \
+                                -o ${modelName}/config.json
                             
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                                -L https://huggingface.co/prajjwal1/bert-tiny/resolve/main/vocab.txt \
-                                -o bert-tiny/vocab.txt
-                        '''
-                        echo "Successfully downloaded bert-tiny model from Hugging Face"
+                                -L https://huggingface.co/${modelName}/resolve/main/vocab.txt \
+                                -o ${modelName}/vocab.txt
+                        """
+                        echo "Successfully downloaded ${modelName} model from Hugging Face"
                     } catch (Exception e) {
                         echo "Error fetching model from Hugging Face: ${e.message}"
                         currentBuild.result = 'FAILURE'
@@ -80,12 +83,13 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
                     script {
                         try {
+                            // Use curl to download mc (MinIO client)
                             sh '''
-                                wget https://dl.min.io/client/mc/release/linux-amd64/mc
+                                curl -O https://dl.min.io/client/mc/release/linux-amd64/mc
                                 chmod +x mc
                                 ./mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
                                 ./mc mb myminio/${BUCKET_NAME} || true
-                                ./mc cp -r bert-tiny myminio/${BUCKET_NAME}/
+                                ./mc cp -r ${modelName} myminio/${BUCKET_NAME}/
                                 rm mc
                             '''
                             echo "Successfully uploaded model to MinIO"
@@ -146,7 +150,7 @@ pipeline {
                 script {
                     try {
                         sh """
-                            rm -rf bert-tiny
+                            rm -rf ${modelName}
                             docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
                             docker rmi ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true
                         """
