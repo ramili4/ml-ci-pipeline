@@ -1,0 +1,15 @@
+model_name: bert-sentiment
+version: "1.0.0"
+huggingface_repo: "nlptown/bert-base-multilingual-uncased-sentiment"
+description: "Multilingual BERT model for sentiment analysis"
+requirements:
+  - transformers
+  - torch
+  - numpy
+docker:
+  base_image: "pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime"
+  expose_port: 8000
+resources:
+  cpu: "2"
+  memory: "4Gi"
+  gpu: "1"
