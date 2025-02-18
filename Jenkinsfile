@@ -33,17 +33,16 @@ pipeline {
         }
 
         stage('Fetch Model from Hugging Face') {
-            steps {
-                script {
-                    // Use Hugging Face API to fetch the model using the API token
-                    sh """
-                        mkdir -p /tmp/ml-ci-pipeline/${env.MODEL_NAME}
-                        wget --header="Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                             "https://huggingface.co/${env.HUGGINGFACE_REPO}/resolve/main/pytorch_model.bin" -O /tmp/ml-ci-pipeline/${env.MODEL_NAME}/pytorch_model.bin
-                    """
-                }
-            }
+    steps {
+        script {
+            // Create directory for model
+            sh 'mkdir -p /tmp/ml-ci-pipeline/bert-sentiment'
+
+            // Fetch model using curl
+            sh 'curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" -L https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment/resolve/main/pytorch_model.bin -o /tmp/ml-ci-pipeline/bert-sentiment/pytorch_model.bin'
         }
+    }
+}
 
         stage('Upload Model to MinIO') {
             steps {
