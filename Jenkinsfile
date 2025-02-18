@@ -53,15 +53,18 @@ pipeline {
                         error("Error: mc binary not found at ${mcPath}")
                     }
                     withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                        withEnv(["TERM=xterm"]) {
+                        withEnv(["TERM=xterm", "MC_NO_COLOR=1"]) {
                             sh """
-                                ${mcPath} alias set myminio ${MINIO_URL} \$MINIO_ACCESS_KEY \$MINIO_SECRET_KEY
-                                ${mcPath} cp -r ${env.MODEL_NAME} myminio/${BUCKET_NAME}/
+                                set -e  # Exit on error
+                                ${mcPath} alias set myminio ${MINIO_URL} "\$MINIO_ACCESS_KEY" "\$MINIO_SECRET_KEY" --quiet
+                                ${mcPath} cp -r "\${MODEL_NAME}" "myminio/${BUCKET_NAME}/"
                             """
                         }
                     }
                 }
             }
+        }
+
         }
 
         stage('Build Docker Image') {
