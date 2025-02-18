@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        HUGGINGFACE_TOKEN = credentials('huggingface-token')  // Stored in Jenkins credentials
-        MODEL_DIR = '~/mock-storage/minio/models/bert-sentiment/1.0.0'
-        MOCK_DOCKER_DIR = '~/mock-storage/jfrog/docker-images'
-        VENV_DIR = '~/mock-storage/ml-pipeline/venv'
+        HUGGINGFACE_TOKEN = credentials('huggingface-token')
+        MODEL_DIR = '/home/jenkins/mock-storage/minio/models/bert-sentiment/1.0.0' // Use the path inside the container
+        MOCK_DOCKER_DIR = '/home/jenkins/mock-storage/jfrog/docker-images' // Use the path inside the container
+        VENV_DIR = '/home/jenkins/mock-storage/ml-pipeline/venv'
     }
 
     stages {
