@@ -55,23 +55,17 @@ pipeline {
                         }
         
                         withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                            // Set environment variables for mc
-                            withEnv(["TERM=xterm", "MC_NO_COLOR=1"]) {
+                            withEnv(["TERM=xterm", "MC_NO_COLOR=1",
+                                     "MC_HOST_myminio=${MINIO_URL}",
+                                     "MC_ACCESS_KEY=${MINIO_ACCESS_KEY}",
+                                     "MC_SECRET_KEY=${MINIO_SECRET_KEY}"]) {
                                 sh """
-                                    set -e # Exit on error
-        
-                                    # More robust alias set
-                                    ${mcPath} alias set myminio ${MINIO_URL} "\$MINIO_ACCESS_KEY" "\$MINIO_SECRET_KEY" --quiet
-        
-                                    # Construct the full path to the model directory
-                                    def modelDir = "${WORKSPACE_DIR}/models/${env.MODEL_NAME}"
-        
-                                    # Quote the model directory path correctly
-                                    ${mcPath} cp -r "${modelDir}" "myminio/${BUCKET_NAME}/" 
+                                    set -e
+                                    ${mcPath} cp -r "${WORKSPACE_DIR}/models/${env.MODEL_NAME}" "myminio/${BUCKET_NAME}/"
                                 """
                             }
                         }
-                        echo "Model upload to MinIO successful" // Add success message
+                        echo "Model upload to MinIO successful"
                     } catch (Exception e) {
                         echo "Error uploading to MinIO: ${e.message}"
                         error("MinIO upload failed. Stopping pipeline.")
