@@ -63,6 +63,8 @@ pipeline {
         stage('Download and Store Model') {
             steps {
                 script {
+                    // Set DRY_RUN to false for downloading the model
+                    def dryRunDownload = 'false'
                     if (env.DRY_RUN.toBoolean()) {
                         echo "[DRY RUN] Would download model from: ${env.HUGGINGFACE_REPO}"
                     } else {
