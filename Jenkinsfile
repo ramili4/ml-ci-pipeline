@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        HUGGINGFACE_TOKEN = credentials('huggingface-token')
-        MODEL_DIR = '/opt/ml-models' // Use the path inside the container
-        MOCK_DOCKER_DIR = '/opt/ml-models/docker-images' // Use the path inside the container
-        VENV_DIR = '/opt/ml-models/venv'
+        WORKSPACE_DIR = "${WORKSPACE}/mock-storage"
+        MODEL_DIR = "${WORKSPACE_DIR}/minio/models/bert-sentiment/1.0.0"
+        MOCK_DOCKER_DIR = "${WORKSPACE_DIR}/jfrog/docker-images"
+        VENV_DIR = "${WORKSPACE_DIR}/ml-pipeline/venv"
     }
 
     stages {
