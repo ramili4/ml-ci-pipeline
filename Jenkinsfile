@@ -9,6 +9,7 @@ pipeline {
         REGISTRY = "jfrog:8082/docker-local"
         JFROG_URL = "http://jfrog:8081/artifactory"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
+        MODEL_REPO = "prajjwal1/bert-tiny"  // Changed to smaller model
     }
 
     stages {
@@ -19,8 +20,7 @@ pipeline {
                         // Parse the model-config.yaml from workspace
                         def modelConfig = readYaml file: 'model-config.yaml'
                         env.MODEL_NAME = modelConfig.model_name
-                        env.HUGGINGFACE_REPO = modelConfig.huggingface_repo
-                        echo "Successfully read model config. Model: ${env.MODEL_NAME}, Repo: ${env.HUGGINGFACE_REPO}"
+                        echo "Successfully read model config. Model: ${env.MODEL_NAME}"
                     } catch (Exception e) {
                         echo "Error reading model config: ${e.message}"
                         currentBuild.result = 'FAILURE'
@@ -35,15 +35,24 @@ pipeline {
                 script {
                     try {
                         // Create directory for model in workspace
-                        sh 'mkdir -p bert-sentiment'
+                        sh 'mkdir -p bert-tiny'
 
-                        // Fetch model using curl
+                        // Fetch the smaller model files
                         sh '''
+                            # Download model files
                             curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
-                            -L https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment/resolve/main/pytorch_model.bin \
-                            -o bert-sentiment/pytorch_model.bin
+                                -L https://huggingface.co/prajjwal1/bert-tiny/resolve/main/pytorch_model.bin \
+                                -o bert-tiny/pytorch_model.bin
+                            
+                            curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
+                                -L https://huggingface.co/prajjwal1/bert-tiny/resolve/main/config.json \
+                                -o bert-tiny/config.json
+                            
+                            curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" \
+                                -L https://huggingface.co/prajjwal1/bert-tiny/resolve/main/vocab.txt \
+                                -o bert-tiny/vocab.txt
                         '''
-                        echo "Successfully downloaded model from Hugging Face"
+                        echo "Successfully downloaded bert-tiny model from Hugging Face"
                     } catch (Exception e) {
                         echo "Error fetching model from Hugging Face: ${e.message}"
                         currentBuild.result = 'FAILURE'
@@ -64,7 +73,7 @@ pipeline {
                                 chmod +x mc
                                 ./mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
                                 ./mc mb myminio/${BUCKET_NAME} || true
-                                ./mc cp -r bert-sentiment myminio/${BUCKET_NAME}/
+                                ./mc cp -r bert-tiny myminio/${BUCKET_NAME}/
                                 rm mc
                             '''
                             echo "Successfully uploaded model to MinIO"
@@ -127,7 +136,7 @@ pipeline {
                     try {
                         // Clean up local files and Docker images
                         sh """
-                            rm -rf bert-sentiment
+                            rm -rf bert-tiny
                             docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
                             docker rmi ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true
                         """
