@@ -64,7 +64,7 @@ pipeline {
 
             // Ensure mc exists before running the command
             if (fileExists(mcPath)) {
-                withCredentials([string(credentialsId: 'minio-secret-key', variable: 'MINIO_SECRET_KEY')]) {
+                withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
                     sh """
                         ${mcPath} alias set myminio http://minio:9000 admin \$MINIO_SECRET_KEY
                         ${mcPath} cp model.onnx myminio/models/
