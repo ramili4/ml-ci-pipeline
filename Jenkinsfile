@@ -16,7 +16,7 @@ pipeline {
             steps {
                 script {
                     // Clone the repository containing the Jenkinsfile and model-config.yaml
-                    sh 'git clone https://github.com/ramili4/ml-ci-pipeline.git /opt/ml-ci-pipeline'
+                    sh 'git clone https://github.com/ramili4/ml-ci-pipeline.git /tmp/ml-ci-pipeline'
                 }
             }
         }
@@ -25,7 +25,7 @@ pipeline {
             steps {
                 script {
                     // Parse the model-config.yaml to get the model name and repo
-                    def modelConfig = readYaml file: '/opt/ml-ci-pipeline/model-config.yaml'
+                    def modelConfig = readYaml file: '/tmp/ml-ci-pipeline/model-config.yaml'
                     env.MODEL_NAME = modelConfig.model_name
                     env.HUGGINGFACE_REPO = modelConfig.huggingface_repo
                 }
@@ -37,9 +37,9 @@ pipeline {
                 script {
                     // Use Hugging Face API to fetch the model using the API token
                     sh """
-                        mkdir -p /opt/ml-ci-pipeline/${env.MODEL_NAME}
+                        mkdir -p /tmp/ml-ci-pipeline/${env.MODEL_NAME}
                         wget --header="Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                             "https://huggingface.co/${env.HUGGINGFACE_REPO}/resolve/main/pytorch_model.bin" -O /opt/ml-ci-pipeline/${env.MODEL_NAME}/pytorch_model.bin
+                             "https://huggingface.co/${env.HUGGINGFACE_REPO}/resolve/main/pytorch_model.bin" -O /tmp/ml-ci-pipeline/${env.MODEL_NAME}/pytorch_model.bin
                     """
                 }
             }
