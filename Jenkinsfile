@@ -49,7 +49,10 @@ pipeline {
             steps {
                 script {
                     try {
-                        // ... (mc path check)
+                        def mcPath = '/usr/bin/mc' // Or wherever mc is installed
+                        if (!fileExists(mcPath)) {
+                            error("Error: mc binary not found at ${mcPath}")
+                        }
         
                         withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
                             withEnv(["TERM=xterm", "MC_NO_COLOR=1",
@@ -59,6 +62,7 @@ pipeline {
                                 sh """
                                     set -e
                                     def modelDir = "\${WORKSPACE}/models/\${env.MODEL_NAME}" // Correctly access Jenkins env vars
+                                    mkdir -p "\${WORKSPACE}/models/\${env.MODEL_NAME}" // Make sure the directory exists!
                                     ${mcPath} cp -r "\${modelDir}" "myminio/\${BUCKET_NAME}/"
                                 """
                             }
