@@ -58,25 +58,27 @@ pipeline {
         }
 
         stage('Upload Model to MinIO') {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                    script {
-                        try {
-                            sh """
-                                /var/lib/jenkins/mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
-                                /var/lib/jenkins/mc mb myminio/${BUCKET_NAME} || true
-                                /var/lib/jenkins/mc cp -r ${MODEL_NAME} myminio/${BUCKET_NAME}/
-                            """
-                            echo "Successfully uploaded model to MinIO"
-                        } catch (Exception e) {
-                            echo "Error uploading model: ${e.message}"
-                            currentBuild.result = 'FAILURE'
-                            error("Stopping pipeline due to model upload failure.")
-                        }
-                    }
+    steps {
+        withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
+            script {
+                try {
+                    sh '''
+                        chmod +x /var/lib/jenkins/mc
+                        /var/lib/jenkins/mc alias set myminio "$MINIO_URL" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+                        /var/lib/jenkins/mc mb myminio/"$BUCKET_NAME" || true
+                        /var/lib/jenkins/mc cp -r "$MODEL_NAME" myminio/"$BUCKET_NAME"/
+                    '''
+                    echo "Successfully uploaded model to MinIO"
+                } catch (Exception e) {
+                    echo "Error uploading model: ${e.message}"
+                    currentBuild.result = 'FAILURE'
+                    error("Stopping pipeline due to model upload failure.")
                 }
             }
         }
+    }
+}
+
 
         stage('Build Docker Image') {
             steps {
