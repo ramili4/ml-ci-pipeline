@@ -12,48 +12,38 @@ pipeline {
         WORKSPACE_DIR = "${WORKSPACE}"
     }
 
-    stage('Setup Environment') {
-    steps {
-        script {
-            try {
-                sh '''
-                    # Ensure the apt lists directory exists and fix permissions
-                    sudo mkdir -p /var/lib/apt/lists/partial
-                    sudo chmod -R 755 /var/lib/apt/lists
+    stages {
+        stage('Setup Environment') {
+            steps {
+                script {
+                    try {
+                        sh '''
+                            sudo mkdir -p /var/lib/apt/lists/partial
+                            sudo chmod -R 755 /var/lib/apt/lists
 
-                    # Fix any locked apt processes before updating
-                    sudo rm -rf /var/lib/apt/lists/lock
-                    sudo rm -rf /var/cache/apt/archives/lock
-                    sudo rm -rf /var/lib/dpkg/lock*
+                            sudo rm -rf /var/lib/apt/lists/lock
+                            sudo rm -rf /var/cache/apt/archives/lock
+                            sudo rm -rf /var/lib/dpkg/lock*
 
-                    # Update package lists
-                    sudo apt-get update || sudo apt-get update --fix-missing
+                            sudo apt-get update || sudo apt-get update --fix-missing
+                            sudo apt-get install -y python3 python3-pip
 
-                    # Install Python and pip
-                    sudo apt-get install -y python3 python3-pip
+                            if ! command -v pip3 &> /dev/null; then
+                                sudo apt-get install -y python3-pip
+                            fi
 
-                    # Ensure pip3 is available
-                    if ! command -v pip3 &> /dev/null; then
-                        echo "pip3 not found, installing..."
-                        sudo apt-get install -y python3-pip
-                    fi
-
-                    # Install Python dependencies
-                    pip3 install --user pyyaml requests
-
-                    # Verify installation
-                    python3 --version
-                    pip3 --version
-                '''
-                echo "Environment setup completed successfully"
-            } catch (Throwable e) {
-                echo "Error during environment setup: ${e.message}"
-                error("Failed to setup environment. Stopping pipeline.")
+                            pip3 install --user pyyaml requests
+                            python3 --version
+                            pip3 --version
+                        '''
+                        echo "Environment setup completed successfully"
+                    } catch (Throwable e) {
+                        echo "Error during environment setup: ${e.message}"
+                        error("Failed to setup environment. Stopping pipeline.")
+                    }
+                }
             }
         }
-    }
-}
-
 
         stage('Checkout') {
             steps {
@@ -79,7 +69,7 @@ pipeline {
 
                         def modelConfig = readYaml file: 'model-config.yaml'
                         def requiredFields = ['model_name', 'huggingface_repo', 'model_files']
-                        
+
                         requiredFields.each { field ->
                             if (!modelConfig[field]) {
                                 error("Missing required field in config: ${field}")
@@ -152,91 +142,6 @@ pipeline {
                     } catch (Throwable e) {
                         echo "Error downloading model files: ${e.message}"
                         error("Model download failed. Stopping pipeline.")
-                    }
-                }
-            }
-        }
-
-        stage('Setup MinIO Client') {
-            steps {
-                script {
-                    try {
-                        withCredentials([usernamePassword(credentialsId: 'minio-credentials', 
-                                       usernameVariable: 'MINIO_ACCESS_KEY', 
-                                       passwordVariable: 'MINIO_SECRET_KEY')]) {
-                            sh '''
-                                wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O mc
-                                chmod +x mc
-                                ./mc alias set myminio ${MINIO_URL} ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY}
-                            '''
-                        }
-                        echo "MinIO client setup successful"
-                    } catch (Throwable e) {
-                        echo "Error setting up MinIO client: ${e.message}"
-                        error("MinIO setup failed. Stopping pipeline.")
-                    }
-                }
-            }
-        }
-
-        stage('Upload Model to MinIO') {
-            steps {
-                script {
-                    try {
-                        withCredentials([usernamePassword(credentialsId: 'minio-credentials', 
-                                       usernameVariable: 'MINIO_ACCESS_KEY', 
-                                       passwordVariable: 'MINIO_SECRET_KEY')]) {
-                            sh '''
-                                ./mc mb myminio/${BUCKET_NAME} || true
-                                ./mc cp -r ${WORKSPACE}/models/${MODEL_NAME} myminio/${BUCKET_NAME}/
-                            '''
-                        }
-                        echo "Model upload to MinIO successful"
-                    } catch (Throwable e) {
-                        echo "Error uploading to MinIO: ${e.message}"
-                        error("MinIO upload failed. Stopping pipeline.")
-                    }
-                }
-            }
-        }
-
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    try {
-                        sh """
-                            docker build \
-                                --build-arg MINIO_URL=${MINIO_URL} \
-                                --build-arg BUCKET_NAME=${BUCKET_NAME} \
-                                --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                                -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                        """
-                        echo "Docker image build successful"
-                    } catch (Throwable e) {
-                        echo "Error building Docker image: ${e.message}"
-                        error("Docker build failed. Stopping pipeline.")
-                    }
-                }
-            }
-        }
-
-        stage('Push to JFrog Artifactory') {
-            steps {
-                script {
-                    try {
-                        withCredentials([usernamePassword(credentialsId: 'jfrog-credentials', 
-                                       usernameVariable: 'JFROG_USER', 
-                                       passwordVariable: 'JFROG_PASSWORD')]) {
-                            sh """
-                                docker login -u ${JFROG_USER} -p ${JFROG_PASSWORD} ${REGISTRY}
-                                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
-                                docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
-                            """
-                        }
-                        echo "Image push to JFrog successful"
-                    } catch (Throwable e) {
-                        echo "Error pushing to JFrog: ${e.message}"
-                        error("JFrog push failed. Stopping pipeline.")
                     }
                 }
             }
