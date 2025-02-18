@@ -15,20 +15,25 @@ pipeline {
         stage('Clone Repository') {
             steps {
                 script {
-                    try {
-                        // Check if the directory exists
-                        if (fileExists('/tmp/ml-ci-pipeline')) {
-                            echo 'Directory /tmp/ml-ci-pipeline already exists. Cleaning up before cloning.'
-                            // Clean the existing directory
+                    // Check if the directory exists and clean it up before cloning
+                    if (fileExists('/tmp/ml-ci-pipeline')) {
+                        echo 'Directory /tmp/ml-ci-pipeline already exists. Cleaning up before cloning.'
+                        try {
                             sh 'rm -rf /tmp/ml-ci-pipeline'
+                        } catch (Exception e) {
+                            echo "Error cleaning up directory: ${e.message}"
+                            currentBuild.result = 'FAILURE'
+                            error("Stopping pipeline due to cleanup failure.")
                         }
-                        
+                    }
+
+                    try {
                         // Clone the repository
-                        echo 'Cloning repository...'
                         sh 'git clone https://github.com/ramili4/ml-ci-pipeline.git /tmp/ml-ci-pipeline'
                     } catch (Exception e) {
+                        echo "Error cloning repository: ${e.message}"
                         currentBuild.result = 'FAILURE'
-                        error "Failed to clone the repository: ${e.message}"
+                        error("Stopping pipeline due to repository clone failure.")
                     }
                 }
             }
@@ -39,13 +44,13 @@ pipeline {
                 script {
                     try {
                         // Parse the model-config.yaml to get the model name and repo
-                        echo 'Reading model config...'
                         def modelConfig = readYaml file: '/tmp/ml-ci-pipeline/model-config.yaml'
                         env.MODEL_NAME = modelConfig.model_name
                         env.HUGGINGFACE_REPO = modelConfig.huggingface_repo
                     } catch (Exception e) {
+                        echo "Error reading model config: ${e.message}"
                         currentBuild.result = 'FAILURE'
-                        error "Failed to read model config: ${e.message}"
+                        error("Stopping pipeline due to config file read failure.")
                     }
                 }
             }
@@ -56,15 +61,14 @@ pipeline {
                 script {
                     try {
                         // Create directory for model
-                        echo 'Creating directory for model...'
                         sh 'mkdir -p /tmp/ml-ci-pipeline/bert-sentiment'
 
                         // Fetch model using curl
-                        echo 'Fetching model from Hugging Face...'
                         sh 'curl -H "Authorization: Bearer $HUGGINGFACE_API_TOKEN" -L https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment/resolve/main/pytorch_model.bin -o /tmp/ml-ci-pipeline/bert-sentiment/pytorch_model.bin'
                     } catch (Exception e) {
+                        echo "Error fetching model from Hugging Face: ${e.message}"
                         currentBuild.result = 'FAILURE'
-                        error "Failed to fetch model from Hugging Face: ${e.message}"
+                        error("Stopping pipeline due to model fetch failure.")
                     }
                 }
             }
@@ -75,16 +79,16 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
                     script {
                         try {
-                            echo 'Installing MinIO client and uploading model...'
                             sh """
                                 apt update && apt install -y mc  # Install MinIO client
                                 mc alias set myminio ${MINIO_URL} $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
                                 mc mb myminio/${BUCKET_NAME} || true
-                                mc cp -r /tmp/ml-ci-pipeline/${MODEL_NAME} myminio/${BUCKET_NAME}/
+                                mc cp -r /opt/ml-ci-pipeline/${MODEL_NAME} myminio/${BUCKET_NAME}/
                             """
                         } catch (Exception e) {
+                            echo "Error uploading model to MinIO: ${e.message}"
                             currentBuild.result = 'FAILURE'
-                            error "Failed to upload model to MinIO: ${e.message}"
+                            error("Stopping pipeline due to MinIO upload failure.")
                         }
                     }
                 }
@@ -96,11 +100,11 @@ pipeline {
                 script {
                     try {
                         // Build Docker image with the specified base image and other settings
-                        echo 'Building Docker image...'
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
                     } catch (Exception e) {
+                        echo "Error building Docker image: ${e.message}"
                         currentBuild.result = 'FAILURE'
-                        error "Failed to build Docker image: ${e.message}"
+                        error("Stopping pipeline due to Docker image build failure.")
                     }
                 }
             }
@@ -111,15 +115,15 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'jfrog-credentials', usernameVariable: 'JFROG_USER', passwordVariable: 'JFROG_PASSWORD')]) {
                     script {
                         try {
-                            echo 'Tagging and pushing Docker image to JFrog...'
                             sh """
                                 docker login -u $JFROG_USER -p $JFROG_PASSWORD ${REGISTRY}
                                 docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
                                 docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
                             """
                         } catch (Exception e) {
+                            echo "Error tagging or pushing Docker image to JFrog: ${e.message}"
                             currentBuild.result = 'FAILURE'
-                            error "Failed to tag and push Docker image to JFrog: ${e.message}"
+                            error("Stopping pipeline due to JFrog push failure.")
                         }
                     }
                 }
