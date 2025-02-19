@@ -5,10 +5,11 @@ pipeline {
         MINIO_URL = "http://minio:9000"
         BUCKET_NAME = "models"
         NEXUS_HOST = "localhost"
-        NEXUS_DOCKER_PORT = "8082"
+        NEXUS_DOCKER_PORT = "8082"  
         DOCKER_REPO_NAME = "docker-hosted"
-        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
+        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"  
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
+        DOCKER_HOST = "unix:///var/run/docker.sock"
     }
 
     stages {
@@ -31,6 +32,7 @@ pipeline {
                     sh """
                         mkdir -p models/${env.MODEL_NAME}
                         set -e
+
                         for file in pytorch_model.bin config.json vocab.txt; do
                             curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
                                 -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
@@ -55,10 +57,12 @@ pipeline {
                     withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
                         sh """
                             /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
+
                             if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
                                 echo "Creating bucket ${BUCKET_NAME}..."
                                 /usr/local/bin/mc mb myminio/${BUCKET_NAME}
                             fi
+
                             /usr/local/bin/mc cp --recursive ${modelPath} myminio/${BUCKET_NAME}/
                         """
                     }
@@ -93,12 +97,6 @@ pipeline {
         }
 
         stage('Build Docker Image') {
-            agent {
-                docker {
-                    image 'docker:dind'
-                    args '--privileged -v /var/run/docker.sock:/var/run/docker.sock'
-                }
-            }
             steps {
                 script {
                     def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
@@ -109,21 +107,15 @@ pipeline {
                             --build-arg MINIO_URL=${MINIO_URL} \
                             --build-arg BUCKET_NAME=${BUCKET_NAME} \
                             --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                            -t ${imageName}:${imageTag} .
+                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} .
                     """
-                    env.IMAGE_NAME = imageName
-                    echo "Successfully built Docker image: ${env.IMAGE_NAME}:${imageTag}"
+                    env.IMAGE_NAME = imageName // Update IMAGE_NAME for later use
+                    echo "Successfully built Docker image: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
 
         stage('Tag and Push Image to Nexus') {
-            agent {
-                docker {
-                    image 'docker:dind'
-                    args '--privileged -v /var/run/docker.sock:/var/run/docker.sock'
-                }
-            }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
@@ -153,5 +145,5 @@ pipeline {
                 }
             }
         }
-    }
-}
+    } 
+} 
