@@ -132,17 +132,17 @@ pipeline {
             }
         }
         
-        stage('Cleanup') {
-            steps {
-                script {
-                    // Use single quotes for shell commands that don't need Groovy interpolation
-                    sh '''
-                        rm -rf models/''' + "${env.MODEL_NAME}" + '''
-                        docker images -q ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
-                        docker images -q ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
-                    '''
-                    echo "Successfully cleaned up workspace"
+                stage('Cleanup') {
+                    steps {
+                        script {
+                            sh '''
+                                rm -rf models/''' + "${env.MODEL_NAME}" + '''
+                                docker images -q ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
+                                docker images -q ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
+                            '''
+                            echo "Successfully cleaned up workspace"
+                        }
+                    }
                 }
-            }
-        }
-    }
+            }  // Close 'stages' block
+        }  // Close 'pipeline' block
