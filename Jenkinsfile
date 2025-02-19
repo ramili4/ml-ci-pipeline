@@ -14,6 +14,7 @@ pipeline {
         DOCKER_REPO_NAME = "docker-hosted"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"
+        DOCKER_HOST = "unix:///var/run/docker.sock"
     }
 
     stages {
