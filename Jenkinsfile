@@ -9,7 +9,7 @@ pipeline {
         NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"
         NEXUS_HTTP_PORT = "8081"
-        REGISTRY = "${NEXUS_HOST}:${NEXUS_HTTP_PORT}/repository/docker-hosted"
+        REGISTRY = "${NEXUS_HOST}:${NEXUS_HTTP_PORT}"
         NEXUS_URL = "http://${NEXUS_HOST}:${NEXUS_HTTP_PORT}"
         DOCKER_REPO_NAME = "docker-hosted"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
@@ -123,10 +123,11 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     // Use a safer approach to handle credentials
+                    withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     sh '''
-                        echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin ''' + "${REGISTRY}" + '''
-                        docker tag ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ' ' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + '''
-                        docker push ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + '''
+                        echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin ${REGISTRY}
+                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
+                        docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
                     '''
                     echo "Successfully pushed image to Nexus"
                 }
