@@ -49,32 +49,25 @@ pipeline {
             steps {
                 script {
                     def modelPath = "${WORKSPACE}/models/bert-tiny"
-                    def downloadedModelPath = "${WORKSPACE}/bert-tiny"
         
-                    // Ensure the model directory exists
-                    sh "mkdir -p ${modelPath}"
-        
-                    // Copy downloaded model files to the correct directory
-                    sh "cp -r ${downloadedModelPath}/* ${modelPath}/"
-        
-                    // Debug: Check if the files exist
-                    sh "ls -lah ${modelPath}"
-        
-                    if (fileExists(modelPath)) {
-                        withCredentials([string(credentialsId: 'minio-secret-key', variable: 'MINIO_SECRET_KEY')]) {
-                            withEnv(["MINIO_ALIAS=myminio", "MINIO_URL=http://minio:9000"]) {
-                                sh """
-                                /usr/local/bin/mc alias set ${MINIO_ALIAS} ${MINIO_URL} admin ${MINIO_SECRET_KEY} --quiet
-                                /usr/local/bin/mc cp --recursive ${modelPath} myminio/models/
-                                """
-                            }
-                        }
-                    } else {
+                    // Ensure model directory is not empty
+                    def modelFiles = sh(script: "ls -1 ${modelPath} | wc -l", returnStdout: true).trim()
+                    if (modelFiles.toInteger() == 0) {
                         error("Error: Model directory is empty!")
+                    }
+        
+                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
+                        withEnv(["MINIO_ALIAS=myminio", "MINIO_URL=http://minio:9000"]) {
+                            sh """
+                            /usr/local/bin/mc alias set ${MINIO_ALIAS} ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet
+                            /usr/local/bin/mc cp --recursive ${modelPath} ${MINIO_ALIAS}/models/
+                            """
+                        }
                     }
                 }
             }
         }
+        
 
         stage('Build Docker Image') {
             steps {
