@@ -43,8 +43,6 @@ pipeline {
                 }
             }
         }
-    }
-}
 
         stage('Upload Model to MinIO') {
             steps {
