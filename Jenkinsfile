@@ -4,14 +4,14 @@ pipeline {
     environment {
         MINIO_URL = "http://minio:9000"
         BUCKET_NAME = "models"
+        IMAGE_NAME = "my-app"
+        IMAGE_TAG = "latest"
         NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"  
         DOCKER_REPO_NAME = "docker-hosted"
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"  
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
-        MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"
         DOCKER_HOST = "unix:///var/run/docker.sock"
-        IMAGE_TAG = "latest"
     }
 
     stages {
@@ -20,9 +20,8 @@ pipeline {
                 script {
                     def modelConfig = readYaml file: 'model-config.yaml'
                     env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
-                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}".toLowerCase().replace('_', '-')  
-                    echo "Using model: ${env.MODEL_NAME}"
-                    echo "Docker image name: ${env.IMAGE_NAME}"
+                    env.HF_REPO = modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
+                    echo "Using model: ${env.MODEL_NAME} from repo: ${env.HF_REPO}"
                 }
             }
         }
@@ -34,22 +33,18 @@ pipeline {
                         mkdir -p models/${env.MODEL_NAME}
                         set -e
 
-                        curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                            -L https://huggingface.co/${MODEL_REPO}/resolve/main/pytorch_model.bin \
-                            -o models/${env.MODEL_NAME}/pytorch_model.bin
-
-                        curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                            -L https://huggingface.co/${MODEL_REPO}/resolve/main/config.json \
-                            -o models/${env.MODEL_NAME}/config.json
-
-                        curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                            -L https://huggingface.co/${MODEL_REPO}/resolve/main/vocab.txt \
-                            -o models/${env.MODEL_NAME}/vocab.txt
+                        for file in pytorch_model.bin config.json vocab.txt; do
+                            curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
+                                -o models/${env.MODEL_NAME}/\$file
+                        done
                     """
                     echo "Successfully downloaded model: ${env.MODEL_NAME}"
                 }
             }
         }
+    }
+}
 
         stage('Upload Model to MinIO') {
             steps {
