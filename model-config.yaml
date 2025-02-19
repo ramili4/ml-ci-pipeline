@@ -1,7 +1,7 @@
-model_name: "bert-tiny"
+model_name: "bert-small"
 version: "1.0.0"
-huggingface_repo: "prajjwal1/bert-tiny"
-model_size: "17MB"
+huggingface_repo: "prajjwal1/bert-small"
+model_size: "29MB"
 
 model_files:
   - pytorch_model.bin
