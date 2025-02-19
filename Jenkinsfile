@@ -121,41 +121,27 @@ pipeline {
         stage('Tag and Push Image to Nexus') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
-                    script {
-                        sh """
-                            docker login -u "$NEXUS_USER" -p "$NEXUS_PASSWORD" ${REGISTRY}
-                            docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
-                        """
-                        echo "Successfully pushed image to Nexus"
-                    }
+                    // Use a safer approach to handle credentials
+                    sh '''
+                        echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin ''' + "${REGISTRY}" + '''
+                        docker tag ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ' ' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + '''
+                        docker push ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + '''
+                    '''
+                    echo "Successfully pushed image to Nexus"
                 }
             }
         }
-
+        
         stage('Cleanup') {
             steps {
                 script {
-                    sh """
-                        rm -rf models/${env.MODEL_NAME}
-                        docker images -q ${IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi
-                        docker images -q ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi
-                    """
+                    // Use single quotes for shell commands that don't need Groovy interpolation
+                    sh '''
+                        rm -rf models/''' + "${env.MODEL_NAME}" + '''
+                        docker images -q ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
+                        docker images -q ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
+                    '''
                     echo "Successfully cleaned up workspace"
                 }
             }
         }
-    }
-
-    post {
-        success {
-            echo "Pipeline executed successfully!"
-        }
-        failure {
-            echo "Pipeline failed! Check the logs for details."
-        }
-        always {
-            cleanWs()
-        }
-    }
-}
