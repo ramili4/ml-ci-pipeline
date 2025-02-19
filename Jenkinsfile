@@ -7,7 +7,6 @@ pipeline {
         IMAGE_NAME = "my-app"
         IMAGE_TAG = "latest"
         NEXUS_HOST = "localhost"
-        NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"  
         DOCKER_REPO_NAME = "docker-hosted"
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"  
@@ -121,8 +120,6 @@ pipeline {
         stage('Tag and Push Image to Nexus') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
-                    // Use a safer approach to handle credentials
-                    withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     sh '''
                         echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
                         docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
@@ -133,17 +130,17 @@ pipeline {
             }
         }
         
-                stage('Cleanup') {
-                    steps {
-                        script {
-                            sh '''
-                                rm -rf models/''' + "${env.MODEL_NAME}" + '''
-                                docker images -q ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
-                                docker images -q ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
-                            '''
-                            echo "Successfully cleaned up workspace"
-                        }
-                    }
+        stage('Cleanup') {
+            steps {
+                script {
+                    sh '''
+                        rm -rf models/''' + "${env.MODEL_NAME}" + '''
+                        docker images -q ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
+                        docker images -q ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
+                    '''
+                    echo "Successfully cleaned up workspace"
                 }
-            }  // Close 'stages' block
-        }  // Close 'pipeline' block
+            }
+        }
+    }  // Close 'stages' block
+}  // Close 'pipeline' block
