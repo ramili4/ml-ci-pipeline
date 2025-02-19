@@ -1,32 +1,14 @@
-model_name: bert-tiny
+model_name: "bert-tiny"
 version: "1.0.0"
 huggingface_repo: "prajjwal1/bert-tiny"
-description: "Lightweight BERT model for testing and development"
+model_size: "17MB"
+
 model_files:
   - pytorch_model.bin
   - config.json
   - vocab.txt
-model_size: "17MB"
+
 requirements:
-  - transformers==4.30.0  # Specific version for compatibility
-  - torch==2.0.0  # Match base image PyTorch version
+  - transformers==4.30.0
+  - torch==2.0.0
   - numpy>=1.24.0
-docker:
-  base_image: "pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime"
-  expose_port: 8000
-  healthcheck:
-    path: "/health"
-    interval: "30s"
-    timeout: "10s"
-    retries: 3
-resources:
-  cpu: "1"       # Reduced from 2 as it's a smaller model
-  memory: "2Gi"  # Reduced from 4Gi as it's a smaller model
-  gpu: "0"       # Removed GPU requirement as it's for testing
-environment_variables:
-  MAX_SEQUENCE_LENGTH: "128"
-  BATCH_SIZE: "32"
-  NUM_WORKERS: "2"
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
