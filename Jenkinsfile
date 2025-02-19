@@ -14,7 +14,6 @@ pipeline {
         DOCKER_REPO_NAME = "docker-hosted"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"
-        DOCKER_HOST = "unix:///var/run/docker.sock"
     }
 
     stages {
@@ -33,15 +32,17 @@ pipeline {
                 script {
                     sh """
                         mkdir -p models/${env.MODEL_NAME}
-                        curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                        set -e
+
+                        curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
                             -L https://huggingface.co/${MODEL_REPO}/resolve/main/pytorch_model.bin \
                             -o models/${env.MODEL_NAME}/pytorch_model.bin
 
-                        curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                        curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
                             -L https://huggingface.co/${MODEL_REPO}/resolve/main/config.json \
                             -o models/${env.MODEL_NAME}/config.json
 
-                        curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                        curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
                             -L https://huggingface.co/${MODEL_REPO}/resolve/main/vocab.txt \
                             -o models/${env.MODEL_NAME}/vocab.txt
                     """
@@ -54,15 +55,15 @@ pipeline {
             steps {
                 script {
                     def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
-                    def modelFiles = sh(script: "ls -1 ${modelPath} | wc -l", returnStdout: true).trim()
+                    def modelFiles = sh(script: "ls -A ${modelPath} | wc -l", returnStdout: true).trim()
 
                     if (modelFiles.toInteger() == 0) {
-                        error("Error: Model directory is empty!")
+                        error("Error: Model directory is empty! Exiting.")
                     }
 
                     withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
                         sh """
-                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet
+                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
 
                             if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
                                 echo "Creating bucket ${BUCKET_NAME}..."
@@ -79,23 +80,23 @@ pipeline {
         stage('Create Dockerfile') {
             steps {
                 script {
-                    def dockerfileContent = '''
+                    def dockerfileContent = """
                     FROM python:3.9-slim
 
                     ARG MINIO_URL
                     ARG BUCKET_NAME
                     ARG MODEL_NAME
 
-                    ENV MINIO_URL=${MINIO_URL}
-                    ENV BUCKET_NAME=${BUCKET_NAME}
-                    ENV MODEL_NAME=${MODEL_NAME}
+                    ENV MINIO_URL=\${MINIO_URL}
+                    ENV BUCKET_NAME=\${BUCKET_NAME}
+                    ENV MODEL_NAME=\${MODEL_NAME}
 
                     WORKDIR /app
 
                     COPY . .
 
                     CMD ["python", "app.py"]
-                    '''
+                    """
                     writeFile file: 'Dockerfile', text: dockerfileContent
                     echo "Dockerfile created successfully!"
                 }
@@ -106,7 +107,6 @@ pipeline {
             steps {
                 script {
                     sh """
-                        export DOCKER_HOST="unix:///var/run/docker.sock"
                         docker build \
                             --build-arg MINIO_URL=${MINIO_URL} \
                             --build-arg BUCKET_NAME=${BUCKET_NAME} \
@@ -123,8 +123,7 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
                         sh """
-                            export DOCKER_HOST="unix:///var/run/docker.sock"
-                            docker login -u \$NEXUS_USER -p \$NEXUS_PASSWORD ${REGISTRY}
+                            docker login -u "$NEXUS_USER" -p "$NEXUS_PASSWORD" ${REGISTRY}
                             docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
                             docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
                         """
@@ -139,9 +138,8 @@ pipeline {
                 script {
                     sh """
                         rm -rf models/${env.MODEL_NAME}
-                        export DOCKER_HOST="unix:///var/run/docker.sock"
-                        docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
-                        docker rmi ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true
+                        docker images -q ${IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi
+                        docker images -q ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi
                     """
                     echo "Successfully cleaned up workspace"
                 }
