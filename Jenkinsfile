@@ -80,36 +80,25 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
-                        // Write a temporary script to check if repo exists
-                        writeFile file: 'check_repo.sh', text: '''
-                            #!/bin/bash
-                            curl -s -o /dev/null -w "%{http_code}" \
-                                -u "$1:$2" \
-                                "$3/service/rest/v1/repositories/$4"
-                        '''
-                        
-                        sh 'chmod +x check_repo.sh'
-                        
-                        // Execute the script passing credentials as arguments
+                        // Check if repository exists
                         def repoExists = sh(
-                            script: "./check_repo.sh '${NEXUS_USER}' '${NEXUS_PASSWORD}' '${NEXUS_URL}' '${DOCKER_REPO_NAME}'",
+                            script: """
+                                curl -s -u '${NEXUS_USER}':'${NEXUS_PASSWORD}' \
+                                '${NEXUS_URL}/service/rest/v1/repositories' | grep -o '\"name\":\"${DOCKER_REPO_NAME}\"' || true
+                            """,
                             returnStdout: true
                         ).trim()
-                        
-                        // Clean up temporary script
-                        sh 'rm check_repo.sh'
-                        
-                        if (repoExists != "200") {
-                            echo "Docker repository '${DOCKER_REPO_NAME}' doesn't exist. Creating it..."
-                            
-                            // Write a temporary script to create repo
-                            writeFile file: 'create_repo.sh', text: '''
-                                #!/bin/bash
-                                curl -X POST "$3/service/rest/v1/repositories/docker/hosted" \
-                                -u "$1:$2" \
+        
+                        if (!repoExists) {
+                            echo "Docker repository '${DOCKER_REPO_NAME}' does not exist. Creating it..."
+        
+                            sh """
+                                curl -X POST '${NEXUS_URL}/service/rest/v1/repositories/docker/hosted' \
+                                -u '${NEXUS_USER}':'${NEXUS_PASSWORD}' \
+                                -H "Accept: application/json" \
                                 -H "Content-Type: application/json" \
                                 -d '{
-                                    "name": "'$4'",
+                                    "name": "${DOCKER_REPO_NAME}",
                                     "online": true,
                                     "storage": {
                                         "blobStoreName": "default",
@@ -118,28 +107,19 @@ pipeline {
                                     },
                                     "docker": {
                                         "v1Enabled": true,
-                                        "forceBasicAuth": true,
-                                        "httpPort": '$5'
+                                        "forceBasicAuth": true
                                     }
                                 }'
-                            '''
-                            
-                            sh 'chmod +x create_repo.sh'
-                            
-                            // Execute the script passing credentials as arguments
-                            sh "./create_repo.sh '${NEXUS_USER}' '${NEXUS_PASSWORD}' '${NEXUS_URL}' '${DOCKER_REPO_NAME}' '${NEXUS_DOCKER_PORT}'"
-                            
-                            // Clean up temporary script
-                            sh 'rm create_repo.sh'
-                            
-                            echo "Docker repository '${DOCKER_REPO_NAME}' created successfully"
+                            """
+                            echo "Docker repository '${DOCKER_REPO_NAME}' created successfully."
                         } else {
-                            echo "Docker repository '${DOCKER_REPO_NAME}' already exists"
+                            echo "Docker repository '${DOCKER_REPO_NAME}' already exists."
                         }
                     }
                 }
             }
         }
+
 
         stage('Create Dockerfile') {
             steps {
