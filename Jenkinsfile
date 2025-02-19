@@ -10,7 +10,7 @@ pipeline {
         JFROG_URL = "http://jfrog:8081/artifactory"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"
-        DOCKER_HOST = "tcp://jenkins-docker:2375"  // Point to dind service
+        DOCKER_HOST = "unix:///var/run/docker.sock"  // ✅ Use local Docker socket
     }
 
     stages {
@@ -81,7 +81,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    withEnv(["DOCKER_HOST=tcp://jenkins-docker:2375"]) {
+                    withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {  // ✅ Use local socket
                         sh """
                             docker build \
                                 --build-arg MINIO_URL=${MINIO_URL} \
@@ -99,7 +99,7 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'jfrog-credentials', usernameVariable: 'JFROG_USER', passwordVariable: 'JFROG_PASSWORD')]) {
                     script {
-                        withEnv(["DOCKER_HOST=tcp://jenkins-docker:2375"]) {
+                        withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {  // ✅ Use local socket
                             sh """
                                 docker login -u \$JFROG_USER -p \$JFROG_PASSWORD ${REGISTRY}
                                 docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
@@ -115,7 +115,7 @@ pipeline {
         stage('Cleanup') {
             steps {
                 script {
-                    withEnv(["DOCKER_HOST=tcp://jenkins-docker:2375"]) {
+                    withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {  // ✅ Use local socket
                         sh """
                             rm -rf models/${env.MODEL_NAME}
                             docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
