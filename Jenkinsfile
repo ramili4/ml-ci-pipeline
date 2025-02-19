@@ -44,28 +44,37 @@ pipeline {
         }
     }
     
-    stage('Upload Model to MinIO') {
-        steps {
-            script {
-                def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
-        
-                // Ensure model directory is not empty
-                def modelFiles = sh(script: "ls -1 ${modelPath} | wc -l", returnStdout: true).trim()
-                if (modelFiles.toInteger() == 0) {
-                    error("Error: Model directory is empty!")
-                }
-        
-                withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
-                    withEnv(["MINIO_ALIAS=myminio", "MINIO_URL=http://minio:9000"]) {
-                        sh """
+ stage('Upload Model to MinIO') {
+    steps {
+        script {
+            def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
+    
+            // Ensure model directory is not empty
+            def modelFiles = sh(script: "ls -1 ${modelPath} | wc -l", returnStdout: true).trim()
+            if (modelFiles.toInteger() == 0) {
+                error("Error: Model directory is empty!")
+            }
+    
+            withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
+                withEnv(["MINIO_ALIAS=myminio", "MINIO_URL=http://minio:9000"]) {
+                    sh """
+                        # Configure MinIO client
                         /usr/local/bin/mc alias set ${MINIO_ALIAS} ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet
-                        /usr/local/bin/mc cp --recursive ${modelPath} ${MINIO_ALIAS}/models/
-                        """
-                    }
+                        
+                        # Create bucket if it doesn't exist
+                        if ! /usr/local/bin/mc ls ${MINIO_ALIAS}/${BUCKET_NAME} >/dev/null 2>&1; then
+                            echo "Creating bucket ${BUCKET_NAME}..."
+                            /usr/local/bin/mc mb ${MINIO_ALIAS}/${BUCKET_NAME}
+                        fi
+                        
+                        # Copy files to MinIO
+                        /usr/local/bin/mc cp --recursive ${modelPath} ${MINIO_ALIAS}/${BUCKET_NAME}/
+                    """
                 }
             }
         }
     }
+}
         stage('Build Docker Image') {
             steps {
                 script {
