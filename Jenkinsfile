@@ -99,8 +99,9 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-") // Convert to lowercase and replace invalid chars
+                    def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
                     def imageName = "ml-model-${modelNameLower}"
+                    def imageTag = env.IMAGE_TAG ?: "latest"
                     sh """
                         docker build \
                             --build-arg MINIO_URL=${MINIO_URL} \
