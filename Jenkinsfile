@@ -49,20 +49,31 @@ pipeline {
             steps {
                 script {
                     try {
-                        def mcPath = '/usr/local/bin/mc'
+                        def mcPath = '/usr/bin/mc'
                         if (!fileExists(mcPath)) {
                             error("Error: mc binary not found at ${mcPath}")
                         }
         
                         withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                            withEnv(["TERM=xterm", "MC_NO_COLOR=1"]) {
-                                def modelDir = "${WORKSPACE}/models/${env.MODEL_NAME}"  // Correctly reference Jenkins env vars
+                            withEnv(["TERM=xterm", "MC_NO_COLOR=1",
+                                     "MC_HOST_myminio=${MINIO_URL}"]) {
+                                def modelDir = "${WORKSPACE}/models/${env.MODEL_NAME}" // Ensure model directory path is correct
         
                                 sh """
                                     set -e
-                                    mkdir -p "${modelDir}"  # Ensure the directory exists
-                                    ${mcPath} alias set myminio ${MINIO_URL} "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" --quiet
-                                    ${mcPath} cp -r "${modelDir}" "myminio/${BUCKET_NAME}/"
+                                    mkdir -p "${modelDir}"  # Ensure directory exists
+        
+                                    # Set MinIO alias securely without exposing secrets in logs
+                                    ${mcPath} alias set myminio ${MINIO_URL} \$(echo '${MINIO_ACCESS_KEY}') \$(echo '${MINIO_SECRET_KEY}') --quiet
+        
+                                    # Verify that the directory is not empty before copying
+                                    if [ -z "\$(ls -A ${modelDir})" ]; then
+                                        echo "Error: Model directory is empty!"
+                                        exit 1
+                                    fi
+        
+                                    # Copy files only (not the directory itself)
+                                    ${mcPath} cp -r "${modelDir}/" "myminio/${BUCKET_NAME}/"
                                 """
                             }
                         }
@@ -74,6 +85,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('Build Docker Image') {
             steps {
