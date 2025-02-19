@@ -49,7 +49,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        def mcPath = '/usr/bin/mc'
+                        def mcPath = '/usr/local/bin/mc'
                         if (!fileExists(mcPath)) {
                             error("Error: mc binary not found at ${mcPath}")
                         }
