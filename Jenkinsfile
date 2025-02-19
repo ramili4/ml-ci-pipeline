@@ -9,7 +9,7 @@ pipeline {
         NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"
         NEXUS_HTTP_PORT = "8081"
-        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}/repository/docker-hosted"
+        REGISTRY = "${NEXUS_HOST}:${NEXUS_HTTP_PORT}/repository/docker-hosted"
         NEXUS_URL = "http://${NEXUS_HOST}:${NEXUS_HTTP_PORT}"
         DOCKER_REPO_NAME = "docker-hosted"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
