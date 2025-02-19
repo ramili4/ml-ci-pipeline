@@ -76,29 +76,40 @@ pipeline {
             }
         }
 
-        stage('Check/Create Nexus Docker Repository') {
+       stage('Check/Create Nexus Docker Repository') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
+                        // Write a temporary script to check if repo exists
+                        writeFile file: 'check_repo.sh', text: '''
+                            #!/bin/bash
+                            curl -s -o /dev/null -w "%{http_code}" \
+                                -u "$1:$2" \
+                                "$3/service/rest/v1/repositories/$4"
+                        '''
+                        
+                        sh 'chmod +x check_repo.sh'
+                        
+                        // Execute the script passing credentials as arguments
                         def repoExists = sh(
-                            script: """
-                                curl -s -o /dev/null -w "%{http_code}" \
-                                    -u "${NEXUS_USER}:${NEXUS_PASSWORD}" \
-                                    "${NEXUS_URL}/service/rest/v1/repositories/${DOCKER_REPO_NAME}"
-                            """,
+                            script: "./check_repo.sh '${NEXUS_USER}' '${NEXUS_PASSWORD}' '${NEXUS_URL}' '${DOCKER_REPO_NAME}'",
                             returnStdout: true
                         ).trim()
+                        
+                        // Clean up temporary script
+                        sh 'rm check_repo.sh'
                         
                         if (repoExists != "200") {
                             echo "Docker repository '${DOCKER_REPO_NAME}' doesn't exist. Creating it..."
                             
-                            // Create Docker hosted repository
-                            sh """
-                                curl -X POST "${NEXUS_URL}/service/rest/v1/repositories/docker/hosted" \
-                                -u "${NEXUS_USER}:${NEXUS_PASSWORD}" \
+                            // Write a temporary script to create repo
+                            writeFile file: 'create_repo.sh', text: '''
+                                #!/bin/bash
+                                curl -X POST "$3/service/rest/v1/repositories/docker/hosted" \
+                                -u "$1:$2" \
                                 -H "Content-Type: application/json" \
                                 -d '{
-                                    "name": "${DOCKER_REPO_NAME}",
+                                    "name": "'$4'",
                                     "online": true,
                                     "storage": {
                                         "blobStoreName": "default",
@@ -108,10 +119,19 @@ pipeline {
                                     "docker": {
                                         "v1Enabled": true,
                                         "forceBasicAuth": true,
-                                        "httpPort": ${NEXUS_DOCKER_PORT}
+                                        "httpPort": '$5'
                                     }
                                 }'
-                            """
+                            '''
+                            
+                            sh 'chmod +x create_repo.sh'
+                            
+                            // Execute the script passing credentials as arguments
+                            sh "./create_repo.sh '${NEXUS_USER}' '${NEXUS_PASSWORD}' '${NEXUS_URL}' '${DOCKER_REPO_NAME}' '${NEXUS_DOCKER_PORT}'"
+                            
+                            // Clean up temporary script
+                            sh 'rm create_repo.sh'
+                            
                             echo "Docker repository '${DOCKER_REPO_NAME}' created successfully"
                         } else {
                             echo "Docker repository '${DOCKER_REPO_NAME}' already exists"
