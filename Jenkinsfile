@@ -7,11 +7,10 @@ pipeline {
         IMAGE_NAME = "my-app"
         IMAGE_TAG = "latest"
         NEXUS_HOST = "localhost"
-        NEXUS_DOCKER_PORT = "8082"
-        NEXUS_HTTP_PORT = "8081"
-        REGISTRY = "${NEXUS_HOST}:${NEXUS_HTTP_PORT}"
-        NEXUS_URL = "http://${NEXUS_HOST}:${NEXUS_HTTP_PORT}"
+        NEXUS_HOST = "localhost"
+        NEXUS_DOCKER_PORT = "8082"  
         DOCKER_REPO_NAME = "docker-hosted"
+        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"  
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"
         DOCKER_HOST = "unix:///var/run/docker.sock"
@@ -125,7 +124,7 @@ pipeline {
                     // Use a safer approach to handle credentials
                     withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     sh '''
-                        echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin ${REGISTRY}
+                        echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
                         docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
                         docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
                     '''
