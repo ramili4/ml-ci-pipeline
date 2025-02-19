@@ -49,21 +49,20 @@ pipeline {
             steps {
                 script {
                     try {
-                        def mcPath = '/usr/bin/mc' // Or wherever mc is installed
+                        def mcPath = '/usr/bin/mc'
                         if (!fileExists(mcPath)) {
                             error("Error: mc binary not found at ${mcPath}")
                         }
         
                         withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                            withEnv(["TERM=xterm", "MC_NO_COLOR=1",
-                                     "MC_HOST_myminio=${MINIO_URL}",
-                                     "MC_ACCESS_KEY=${MINIO_ACCESS_KEY}",
-                                     "MC_SECRET_KEY=${MINIO_SECRET_KEY}"]) {
+                            withEnv(["TERM=xterm", "MC_NO_COLOR=1"]) {
+                                def modelDir = "${WORKSPACE}/models/${env.MODEL_NAME}"  // Correctly reference Jenkins env vars
+        
                                 sh """
                                     set -e
-                                    def modelDir = "\${WORKSPACE}/models/\${env.MODEL_NAME}" // Correctly access Jenkins env vars
-                                    mkdir -p "\${WORKSPACE}/models/\${env.MODEL_NAME}" // Make sure the directory exists!
-                                    ${mcPath} cp -r "\${modelDir}" "myminio/\${BUCKET_NAME}/"
+                                    mkdir -p "${modelDir}"  # Ensure the directory exists
+                                    ${mcPath} alias set myminio ${MINIO_URL} "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" --quiet
+                                    ${mcPath} cp -r "${modelDir}" "myminio/${BUCKET_NAME}/"
                                 """
                             }
                         }
@@ -75,6 +74,7 @@ pipeline {
                 }
             }
         }
+
         stage('Build Docker Image') {
             steps {
                 script {
