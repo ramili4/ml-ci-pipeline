@@ -1,7 +1,7 @@
-model_name: "bert-small"
+model_name: "all-MiniLM-L6-v2"
 version: "1.0.0"
-huggingface_repo: "prajjwal1/bert-small"
-model_size: "29MB"
+huggingface_repo: "sentence-transformers/all-MiniLM-L6-v2"
+model_size: "90MB"
 
 model_files:
   - pytorch_model.bin
