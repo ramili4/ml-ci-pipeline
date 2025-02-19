@@ -22,53 +22,50 @@ pipeline {
                 }
             }
         }
-
-        stage('Fetch Model from Hugging Face') {
-            steps {
-                script {
-                    sh """
-                        mkdir -p ${env.MODEL_NAME}
-                        curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                            -L https://huggingface.co/${MODEL_REPO}/resolve/main/pytorch_model.bin \
-                            -o ${env.MODEL_NAME}/pytorch_model.bin
-                        
-                        curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                            -L https://huggingface.co/${MODEL_REPO}/resolve/main/config.json \
-                            -o ${env.MODEL_NAME}/config.json
-                        
-                        curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                            -L https://huggingface.co/${MODEL_REPO}/resolve/main/vocab.txt \
-                            -o ${env.MODEL_NAME}/vocab.txt
-                    """
-                    echo "Successfully downloaded model: ${env.MODEL_NAME}"
-                }
+    stage('Fetch Model from Hugging Face') {
+        steps {
+            script {
+                sh """
+                    mkdir -p models/${env.MODEL_NAME}
+                    curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                        -L https://huggingface.co/${MODEL_REPO}/resolve/main/pytorch_model.bin \
+                        -o models/${env.MODEL_NAME}/pytorch_model.bin
+                    
+                    curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                        -L https://huggingface.co/${MODEL_REPO}/resolve/main/config.json \
+                        -o models/${env.MODEL_NAME}/config.json
+                    
+                    curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                        -L https://huggingface.co/${MODEL_REPO}/resolve/main/vocab.txt \
+                        -o models/${env.MODEL_NAME}/vocab.txt
+                """
+                echo "Successfully downloaded model: ${env.MODEL_NAME}"
             }
         }
-
-       stage('Upload Model to MinIO') {
-            steps {
-                script {
-                    def modelPath = "${WORKSPACE}/models/bert-tiny"
+    }
+    
+    stage('Upload Model to MinIO') {
+        steps {
+            script {
+                def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
         
-                    // Ensure model directory is not empty
-                    def modelFiles = sh(script: "ls -1 ${modelPath} | wc -l", returnStdout: true).trim()
-                    if (modelFiles.toInteger() == 0) {
-                        error("Error: Model directory is empty!")
-                    }
+                // Ensure model directory is not empty
+                def modelFiles = sh(script: "ls -1 ${modelPath} | wc -l", returnStdout: true).trim()
+                if (modelFiles.toInteger() == 0) {
+                    error("Error: Model directory is empty!")
+                }
         
-                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
-                        withEnv(["MINIO_ALIAS=myminio", "MINIO_URL=http://minio:9000"]) {
-                            sh """
-                            /usr/local/bin/mc alias set ${MINIO_ALIAS} ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet
-                            /usr/local/bin/mc cp --recursive ${modelPath} ${MINIO_ALIAS}/models/
-                            """
-                        }
+                withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
+                    withEnv(["MINIO_ALIAS=myminio", "MINIO_URL=http://minio:9000"]) {
+                        sh """
+                        /usr/local/bin/mc alias set ${MINIO_ALIAS} ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet
+                        /usr/local/bin/mc cp --recursive ${modelPath} ${MINIO_ALIAS}/models/
+                        """
                     }
                 }
             }
         }
-        
-
+    }
         stage('Build Docker Image') {
             steps {
                 script {
