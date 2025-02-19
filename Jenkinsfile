@@ -134,12 +134,12 @@ pipeline {
             steps {
                 script {
                     sh """
-                        echo "Cleaning up local models..."
+                        echo "Удаляем модели сохраненные локально..."
                         rm -rf models/${env.MODEL_NAME}
 
-                        echo "Removing unused Docker images..."
-                        docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi || true
-                        docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi || true
+                        echo "Удаляем неиспользуемые Docker образы..."
+                        docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
+                        docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
                     """
                     echo "Прибрались! Ляпота то какая, красота!"
                 }
