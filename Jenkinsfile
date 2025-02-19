@@ -6,8 +6,12 @@ pipeline {
         BUCKET_NAME = "models"
         IMAGE_NAME = "my-app"
         IMAGE_TAG = "latest"
-        REGISTRY = "jfrog:8082/docker-local"
-        JFROG_URL = "http://jfrog:8081/artifactory"
+        NEXUS_HOST = "localhost"
+        NEXUS_DOCKER_PORT = "8082"
+        NEXUS_HTTP_PORT = "8081"
+        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}/repository/docker-hosted"
+        NEXUS_URL = "http://${NEXUS_HOST}:${NEXUS_HTTP_PORT}"
+        DOCKER_REPO_NAME = "docker-hosted"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"
         DOCKER_HOST = "unix:///var/run/docker.sock"
@@ -72,6 +76,51 @@ pipeline {
             }
         }
 
+        stage('Check/Create Nexus Docker Repository') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
+                    script {
+                        def repoExists = sh(
+                            script: """
+                                curl -s -o /dev/null -w "%{http_code}" \
+                                    -u "${NEXUS_USER}:${NEXUS_PASSWORD}" \
+                                    "${NEXUS_URL}/service/rest/v1/repositories/${DOCKER_REPO_NAME}"
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (repoExists != "200") {
+                            echo "Docker repository '${DOCKER_REPO_NAME}' doesn't exist. Creating it..."
+                            
+                            // Create Docker hosted repository
+                            sh """
+                                curl -X POST "${NEXUS_URL}/service/rest/v1/repositories/docker/hosted" \
+                                -u "${NEXUS_USER}:${NEXUS_PASSWORD}" \
+                                -H "Content-Type: application/json" \
+                                -d '{
+                                    "name": "${DOCKER_REPO_NAME}",
+                                    "online": true,
+                                    "storage": {
+                                        "blobStoreName": "default",
+                                        "strictContentTypeValidation": true,
+                                        "writePolicy": "ALLOW"
+                                    },
+                                    "docker": {
+                                        "v1Enabled": true,
+                                        "forceBasicAuth": true,
+                                        "httpPort": ${NEXUS_DOCKER_PORT}
+                                    }
+                                }'
+                            """
+                            echo "Docker repository '${DOCKER_REPO_NAME}' created successfully"
+                        } else {
+                            echo "Docker repository '${DOCKER_REPO_NAME}' already exists"
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Create Dockerfile') {
             steps {
                 script {
@@ -114,17 +163,17 @@ pipeline {
             }
         }
 
-        stage('Tag and Push Image to JFrog') {
+        stage('Tag and Push Image to Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'jfrog-credentials', usernameVariable: 'JFROG_USER', passwordVariable: 'JFROG_PASSWORD')]) {
+                withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
                         sh """
                             export DOCKER_HOST="unix:///var/run/docker.sock"
-                            docker login -u \$JFROG_USER -p \$JFROG_PASSWORD ${REGISTRY}
+                            docker login -u \$NEXUS_USER -p \$NEXUS_PASSWORD ${REGISTRY}
                             docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
                             docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
                         """
-                        echo "Successfully pushed image to JFrog"
+                        echo "Successfully pushed image to Nexus"
                     }
                 }
             }
