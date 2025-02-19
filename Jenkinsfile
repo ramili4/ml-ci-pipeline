@@ -4,8 +4,6 @@ pipeline {
     environment {
         MINIO_URL = "http://minio:9000"
         BUCKET_NAME = "models"
-        IMAGE_NAME = "my-app"
-        IMAGE_TAG = "latest"
         NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"  
         DOCKER_REPO_NAME = "docker-hosted"
@@ -13,6 +11,7 @@ pipeline {
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         MODEL_REPO = "google/bert_uncased_L-2_H-128_A-2"
         DOCKER_HOST = "unix:///var/run/docker.sock"
+        IMAGE_TAG = "latest"
     }
 
     stages {
@@ -21,7 +20,9 @@ pipeline {
                 script {
                     def modelConfig = readYaml file: 'model-config.yaml'
                     env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
+                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}".toLowerCase().replace('_', '-')  
                     echo "Using model: ${env.MODEL_NAME}"
+                    echo "Docker image name: ${env.IMAGE_NAME}"
                 }
             }
         }
@@ -92,7 +93,7 @@ pipeline {
 
                     WORKDIR /app
 
-                    COPY . .
+                    COPY . . 
 
                     CMD ["python", "app.py"]
                     """
@@ -110,9 +111,9 @@ pipeline {
                             --build-arg MINIO_URL=${MINIO_URL} \
                             --build-arg BUCKET_NAME=${BUCKET_NAME} \
                             --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                            -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} .
                     """
-                    echo "Successfully built Docker image"
+                    echo "Successfully built Docker image: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
@@ -120,27 +121,32 @@ pipeline {
         stage('Tag and Push Image to Nexus') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
-                    sh '''
-                        echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
-                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
-                        docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
-                    '''
-                    echo "Successfully pushed image to Nexus"
+                    script {
+                        sh """
+                            echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
+                            docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                        """
+                        echo "Successfully pushed image to Nexus"
+                    }
                 }
             }
         }
-        
+
         stage('Cleanup') {
             steps {
                 script {
-                    sh '''
-                        rm -rf models/''' + "${env.MODEL_NAME}" + '''
-                        docker images -q ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
-                        docker images -q ''' + "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" + ''' | xargs -r docker rmi
-                    '''
-                    echo "Successfully cleaned up workspace"
+                    sh """
+                        echo "Cleaning up local models..."
+                        rm -rf models/${env.MODEL_NAME}
+
+                        echo "Removing unused Docker images..."
+                        docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi || true
+                        docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi || true
+                    """
+                    echo "Cleanup complete"
                 }
             }
         }
-    }  // Close 'stages' block
-}  // Close 'pipeline' block
+    } // Close 'stages' block
+} // Close 'pipeline' block
