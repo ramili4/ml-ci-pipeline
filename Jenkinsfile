@@ -45,47 +45,36 @@ pipeline {
             }
         }
 
-        stage('Upload Model to MinIO') {
+       stage('Upload Model to MinIO') {
             steps {
                 script {
-                    try {
-                        def mcPath = '/usr/local/bin/mc'
-                        if (!fileExists(mcPath)) {
-                            error("Error: mc binary not found at ${mcPath}")
-                        }
+                    def modelPath = "${WORKSPACE}/models/bert-tiny"
+                    def downloadedModelPath = "${WORKSPACE}/bert-tiny"
         
-                        withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
-                            withEnv(["TERM=xterm", "MC_NO_COLOR=1",
-                                     "MC_HOST_myminio=${MINIO_URL}"]) {
-                                def modelDir = "${WORKSPACE}/models/${env.MODEL_NAME}" // Ensure model directory path is correct
+                    // Ensure the model directory exists
+                    sh "mkdir -p ${modelPath}"
         
+                    // Copy downloaded model files to the correct directory
+                    sh "cp -r ${downloadedModelPath}/* ${modelPath}/"
+        
+                    // Debug: Check if the files exist
+                    sh "ls -lah ${modelPath}"
+        
+                    if (fileExists(modelPath)) {
+                        withCredentials([string(credentialsId: 'minio-secret-key', variable: 'MINIO_SECRET_KEY')]) {
+                            withEnv(["MINIO_ALIAS=myminio", "MINIO_URL=http://minio:9000"]) {
                                 sh """
-                                    set -e
-                                    mkdir -p "${modelDir}"  # Ensure directory exists
-        
-                                    # Set MinIO alias securely without exposing secrets in logs
-                                    ${mcPath} alias set myminio ${MINIO_URL} \$(echo '${MINIO_ACCESS_KEY}') \$(echo '${MINIO_SECRET_KEY}') --quiet
-        
-                                    # Verify that the directory is not empty before copying
-                                    if [ -z "\$(ls -A ${modelDir})" ]; then
-                                        echo "Error: Model directory is empty!"
-                                        exit 1
-                                    fi
-        
-                                    # Copy files only (not the directory itself)
-                                    ${mcPath} cp -r "${modelDir}/" "myminio/${BUCKET_NAME}/"
+                                /usr/local/bin/mc alias set ${MINIO_ALIAS} ${MINIO_URL} admin ${MINIO_SECRET_KEY} --quiet
+                                /usr/local/bin/mc cp --recursive ${modelPath} myminio/models/
                                 """
                             }
                         }
-                        echo "Model upload to MinIO successful"
-                    } catch (Exception e) {
-                        echo "Error uploading to MinIO: ${e.message}"
-                        error("MinIO upload failed. Stopping pipeline.")
+                    } else {
+                        error("Error: Model directory is empty!")
                     }
                 }
             }
         }
-
 
         stage('Build Docker Image') {
             steps {
