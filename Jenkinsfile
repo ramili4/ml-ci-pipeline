@@ -13,20 +13,20 @@ pipeline {
     }
 
     stages {
-        stage('Read Model Config') {
+        stage('Считываем конфигурацию модели') {
             steps {
                 script {
                     def modelConfig = readYaml file: 'model-config.yaml'
                     env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
                     env.HF_REPO = modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
                     env.IMAGE_TAG = "latest"
-                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}" // Dynamically set image name
+                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}" 
                     echo "Using model: ${env.MODEL_NAME} from repo: ${env.HF_REPO}"
                 }
             }
         }
 
-        stage('Fetch Model from Hugging Face') {
+        stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
                     sh """
@@ -39,19 +39,19 @@ pipeline {
                                 -o models/${env.MODEL_NAME}/\$file
                         done
                     """
-                    echo "Successfully downloaded model: ${env.MODEL_NAME}"
+                    echo "Успешно скачал модель: ${env.MODEL_NAME}"
                 }
             }
         }
 
-        stage('Upload Model to MinIO') {
+        stage('Сохраняем модель в MinIO') {
             steps {
                 script {
                     def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
                     def modelFiles = sh(script: "ls -A ${modelPath} | wc -l", returnStdout: true).trim()
 
                     if (modelFiles.toInteger() == 0) {
-                        error("Error: Model directory is empty! Exiting.")
+                        error("Ошибка: Папка для модели пуста! Выходим..")
                     }
 
                     withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
@@ -70,7 +70,7 @@ pipeline {
             }
         }
 
-        stage('Create Dockerfile') {
+        stage('Создаем Dockerfile') {
             steps {
                 script {
                     def dockerfileContent = """
@@ -91,12 +91,12 @@ pipeline {
                     CMD ["python", "app.py"]
                     """
                     writeFile file: 'Dockerfile', text: dockerfileContent
-                    echo "Dockerfile created successfully!"
+                    echo "Dockerfile создан успешно!"
                 }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Собираем докер образ') {
             steps {
                 script {
                     def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
@@ -110,12 +110,12 @@ pipeline {
                             -t ${env.IMAGE_NAME}:${IMAGE_TAG} .
                     """
                     env.IMAGE_NAME = imageName // Update IMAGE_NAME for later use
-                    echo "Successfully built Docker image: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
 
-        stage('Tag and Push Image to Nexus') {
+        stage('Ставим тэг и пушим в Nexus') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
@@ -124,13 +124,13 @@ pipeline {
                             docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                             docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                         """
-                        echo "Successfully pushed image: ${env.IMAGE_NAME} to Nexus"
+                        echo "Успешно закачали образ: ${env.IMAGE_NAME} в Nexus"
                     }
                 }
             }
         }
 
-        stage('Cleanup') {
+        stage('Прибираемся-)') {
             steps {
                 script {
                     sh """
@@ -141,7 +141,7 @@ pipeline {
                         docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi || true
                         docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi || true
                     """
-                    echo "Cleanup complete"
+                    echo "Прибрались! Ляпота то какая, красота!"
                 }
             }
         }
