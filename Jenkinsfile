@@ -81,13 +81,16 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
                         // Check if repository exists
-                        def repoExists = sh(
-                            script: """
-                                curl -s -u '${NEXUS_USER}':'${NEXUS_PASSWORD}' \
-                                '${NEXUS_URL}/service/rest/v1/repositories' | grep -o '\"name\":\"${DOCKER_REPO_NAME}\"' || true
-                            """,
-                            returnStdout: true
-                        ).trim()
+                      def repoExists = sh(
+                        script: """
+                            export NEXUS_USER='${NEXUS_USER}'
+                            export NEXUS_PASSWORD='${NEXUS_PASSWORD}'
+                            export NEXUS_URL='${NEXUS_URL}'
+                            export DOCKER_REPO_NAME='${DOCKER_REPO_NAME}'
+                            ./check_repo.sh
+                        """,
+                        returnStdout: true
+                    ).trim()
         
                         if (!repoExists) {
                             echo "Docker repository '${DOCKER_REPO_NAME}' does not exist. Creating it..."
