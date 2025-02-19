@@ -4,8 +4,6 @@ pipeline {
     environment {
         MINIO_URL = "http://minio:9000"
         BUCKET_NAME = "models"
-        IMAGE_NAME = "my-app"
-        IMAGE_TAG = "latest"
         NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"  
         DOCKER_REPO_NAME = "docker-hosted"
@@ -21,6 +19,8 @@ pipeline {
                     def modelConfig = readYaml file: 'model-config.yaml'
                     env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
                     env.HF_REPO = modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
+                    env.IMAGE_TAG = "latest"
+                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}" // Dynamically set image name
                     echo "Using model: ${env.MODEL_NAME} from repo: ${env.HF_REPO}"
                 }
             }
@@ -115,14 +115,12 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
-                        def modelConfig = readYaml(file: 'model-config.yaml') // Read model-config.yaml
-                        def modelName = modelConfig.model_name // Extract model_name, e.g., "bert-small"
                         sh """
                             echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
                             docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                             docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                         """
-                        echo "Successfully pushed image to Nexus"
+                        echo "Successfully pushed image: ${env.IMAGE_NAME} to Nexus"
                     }
                 }
             }
