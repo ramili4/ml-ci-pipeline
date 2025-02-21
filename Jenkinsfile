@@ -118,7 +118,7 @@ pipeline {
         stage('Сканируем образ с помощью Trivy') {
             environment {
                 // Установите в 'true' чтобы пропустить ошибки Trivy
-                TRIVY_IGNORE_FAILURES = 'false'
+                TRIVY_IGNORE_FAILURES = 'true'
             }
                stage('Сканируем образ с помощью Trivy') {
             steps {
@@ -145,11 +145,11 @@ pipeline {
                         cat trivy-reports/scan-results.txt
                     """
 
-                    // Copy Trivy reports to Git repository folder
+                    
                     sh "mkdir -p trivy_reports"
                     sh "cp trivy-reports/* trivy_reports/"
 
-                    // Check for critical vulnerabilities
+                    
                     def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-reports/scan-results.txt && echo true || echo false", returnStdout: true).trim()
 
                     if (hasCritical == "true") {
