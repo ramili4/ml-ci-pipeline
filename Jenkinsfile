@@ -10,6 +10,7 @@ pipeline {
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"  
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         DOCKER_HOST = "unix:///var/run/docker.sock"
+        BUILD_DATE = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
     }
 
     stages {
@@ -19,7 +20,7 @@ pipeline {
                     def modelConfig = readYaml file: 'model-config.yaml'
                     env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
                     env.HF_REPO = modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
-                    env.IMAGE_TAG = "latest"
+                    env.IMAGE_TAG = "${BUILD_DATE}-latest"
                     env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}" 
                     echo "Using model: ${env.MODEL_NAME} from repo: ${env.HF_REPO}"
                 }
@@ -101,7 +102,7 @@ pipeline {
                 script {
                     def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
                     def imageName = "ml-model-${modelNameLower}"
-                    def imageTag = env.IMAGE_TAG ?: "latest"
+                    env.IMAGE_NAME = imageName // Update IMAGE_NAME for later use
                     sh """
                         docker build \
                             --build-arg MINIO_URL=${MINIO_URL} \
@@ -109,8 +110,26 @@ pipeline {
                             --build-arg MODEL_NAME=${env.MODEL_NAME} \
                             -t ${env.IMAGE_NAME}:${IMAGE_TAG} .
                     """
-                    env.IMAGE_NAME = imageName // Update IMAGE_NAME for later use
                     echo "Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Сканируем образ с помощью Trivy') {
+            steps {
+                script {
+                    sh """
+                        # Сканируем образ на уязвимости
+                        trivy image --severity HIGH,CRITICAL ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-results.txt || true
+                        
+                        # Проверяем результаты на наличие критических уязвимостей
+                        if grep -q 'CRITICAL' trivy-results.txt; then
+                            echo "Найдены критические уязвимости! Проверьте отчет trivy-results.txt"
+                            exit 1
+                        fi
+                        
+                        echo "Сканирование безопасности успешно завершено"
+                    """
                 }
             }
         }
@@ -121,8 +140,14 @@ pipeline {
                     script {
                         sh """
                             echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
+                            
+                            # Тэгируем с датой и latest
                             docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                            docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
+                            
+                            # Пушим оба тэга
                             docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
                         """
                         echo "Успешно закачали образ: ${env.IMAGE_NAME} в Nexus"
                     }
@@ -140,10 +165,14 @@ pipeline {
                         echo "Удаляем неиспользуемые Docker образы..."
                         docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
                         docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
+                        docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest | xargs -r docker rmi -f || true
+                        
+                        echo "Удаляем отчет Trivy..."
+                        rm -f trivy-results.txt
                     """
                     echo "Прибрались! Ляпота то какая, красота!"
                 }
             }
         }
     } 
-} 
+}
