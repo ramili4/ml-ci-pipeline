@@ -120,54 +120,56 @@ pipeline {
                 // Установите в 'true' чтобы пропустить ошибки Trivy
                 TRIVY_IGNORE_FAILURES = 'false'
             }
+               stage('Сканируем образ с помощью Trivy') {
             steps {
                 script {
-                    // Создаём директорию для отчётов
                     sh "mkdir -p trivy-reports"
-                    
-                    // Запускаем сканирование и сохраняем результаты в разных форматах
+
                     sh """
-                        # Обновляем базу данных уязвимостей Trivy
                         echo "Обновляем базу данных Trivy..."
                         trivy image --download-db-only
-                        
-                        # Сканируем образ на уязвимости
+
                         echo "Начинаем сканирование образа..."
-                        
-                        # Сохраняем результат в текстовом формате
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format table \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
-                            
-                        # Сохраняем результат в JSON для возможной дальнейшей обработки
+
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format json \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json
-                        
-                        # Выводим результаты в консоль Jenkins
+
                         echo "=== Результаты сканирования Trivy ==="
                         cat trivy-reports/scan-results.txt
-                        
-                        # Проверяем на наличие критических уязвимостей
-                        if grep -q 'CRITICAL' trivy-reports/scan-results.txt; then
-                            echo "⛔ ВНИМАНИЕ: Найдены критические уязвимости!"
-                            if [ "\${TRIVY_IGNORE_FAILURES}" != "true" ]; then
-                                exit 1
-                            else
-                                echo "⚠️ Пропускаем ошибки Trivy согласно конфигурации..."
-                            fi
-                        fi
-                        
-                        echo "✅ Сканирование безопасности успешно завершено"
                     """
-                    
-                    // Архивируем отчёты как артефакты Jenkins
+
+                    // Copy Trivy reports to Git repository folder
+                    sh "mkdir -p trivy_reports"
+                    sh "cp trivy-reports/* trivy_reports/"
+
+                    // Check for critical vulnerabilities
+                    def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-reports/scan-results.txt && echo true || echo false", returnStdout: true).trim()
+
+                    if (hasCritical == "true") {
+                        def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', ok: 'Продолжить', parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
+                        if (userChoice == 'Нет') {
+                            error("Сборка остановлена из-за критических уязвимостей.")
+                        } else {
+                            echo "⚠️ Продолжаем несмотря на уязвимости."
+                        }
+                    } else {
+                        echo "✅ Уязвимости не обнаружены или они не критичны."
+                    }
+
                     archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
                 }
             }
         }
+
+        // Following stages remain unchanged...
+    }
+}
 
         stage('Ставим тэг и пушим в Nexus') {
             steps {
