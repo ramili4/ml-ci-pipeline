@@ -1,6 +1,6 @@
-model_name: "all-minilm-l6-v2"
+model_name: "mobilebert-uncased"
 version: "1.0.0"
-huggingface_repo: "sentence-transformers/all-MiniLM-L6-v2"
+huggingface_repo: "google/mobilebert-uncased"
 model_size: "90MB"
 
 model_files:
