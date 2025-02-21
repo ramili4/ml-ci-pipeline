@@ -116,61 +116,53 @@ pipeline {
         }
 
         stage('Сканируем образ с помощью Trivy') {
-            environment {
-                // Установите в 'true' чтобы пропустить ошибки Trivy
-                TRIVY_IGNORE_FAILURES = 'true'
-            }
-               stage('Сканируем образ с помощью Trivy') {
             steps {
                 script {
                     sh "mkdir -p trivy-reports"
-
+        
                     sh """
                         echo "Обновляем базу данных Trivy..."
                         trivy image --download-db-only
-
+        
                         echo "Начинаем сканирование образа..."
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format table \
                             --scanners vuln \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
-
+        
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format json \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json
-
-                        echo "=== Результаты сканирования Trivy ==="
-                        cat trivy-reports/scan-results.txt
                     """
-
-                    
-                    sh "mkdir -p trivy_reports"
-                    sh "cp trivy-reports/* trivy_reports/"
-
-                    
+        
+                    echo "=== 📋 Результаты сканирования Trivy ==="
+                    sh "cat trivy-reports/scan-results.txt"
+        
+                    // Сохраняем отчёты для просмотра в Jenkins
+                    archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
+        
+                    // Проверяем наличие критических уязвимостей
                     def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-reports/scan-results.txt && echo true || echo false", returnStdout: true).trim()
-
+        
                     if (hasCritical == "true") {
-                        def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', ok: 'Продолжить', parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
+                        // Включаем интерактивный выбор продолжать или нет
+                        def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', 
+                                              ok: 'Продолжить', 
+                                              parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
                         if (userChoice == 'Нет') {
                             error("Сборка остановлена из-за критических уязвимостей.")
                         } else {
                             echo "⚠️ Продолжаем несмотря на уязвимости."
                         }
                     } else {
-                        echo "✅ Уязвимости не обнаружены или они не критичны."
+                        echo "✅ Критических уязвимостей не обнаружено."
                     }
-
-                    archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
                 }
             }
         }
 
-        // Following stages remain unchanged...
-    }
-}
 
         stage('Ставим тэг и пушим в Nexus') {
             steps {
