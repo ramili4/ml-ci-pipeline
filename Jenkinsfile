@@ -133,6 +133,7 @@ pipeline {
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format table \
+                            --scanners vuln \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
 
                         trivy image --cache-dir /tmp/trivy \
