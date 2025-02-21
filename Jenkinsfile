@@ -116,20 +116,55 @@ pipeline {
         }
 
         stage('Сканируем образ с помощью Trivy') {
+            environment {
+                // Установите в 'true' чтобы пропустить ошибки Trivy
+                TRIVY_IGNORE_FAILURES = 'false'
+            }
             steps {
                 script {
+                    // Создаём директорию для отчётов
+                    sh "mkdir -p trivy-reports"
+                    
+                    // Запускаем сканирование и сохраняем результаты в разных форматах
                     sh """
-                        # Сканируем образ на уязвимости
-                        trivy image --severity HIGH,CRITICAL ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-results.txt || true
+                        # Обновляем базу данных уязвимостей Trivy
+                        echo "Обновляем базу данных Trivy..."
+                        trivy image --download-db-only
                         
-                        # Проверяем результаты на наличие критических уязвимостей
-                        if grep -q 'CRITICAL' trivy-results.txt; then
-                            echo "Найдены критические уязвимости! Проверьте отчет trivy-results.txt"
-                            exit 1
+                        # Сканируем образ на уязвимости
+                        echo "Начинаем сканирование образа..."
+                        
+                        # Сохраняем результат в текстовом формате
+                        trivy image --cache-dir /tmp/trivy \
+                            --severity HIGH,CRITICAL \
+                            --format table \
+                            ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
+                            
+                        # Сохраняем результат в JSON для возможной дальнейшей обработки
+                        trivy image --cache-dir /tmp/trivy \
+                            --severity HIGH,CRITICAL \
+                            --format json \
+                            ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json
+                        
+                        # Выводим результаты в консоль Jenkins
+                        echo "=== Результаты сканирования Trivy ==="
+                        cat trivy-reports/scan-results.txt
+                        
+                        # Проверяем на наличие критических уязвимостей
+                        if grep -q 'CRITICAL' trivy-reports/scan-results.txt; then
+                            echo "⛔ ВНИМАНИЕ: Найдены критические уязвимости!"
+                            if [ "\${TRIVY_IGNORE_FAILURES}" != "true" ]; then
+                                exit 1
+                            else
+                                echo "⚠️ Пропускаем ошибки Trivy согласно конфигурации..."
+                            fi
                         fi
                         
-                        echo "Сканирование безопасности успешно завершено"
+                        echo "✅ Сканирование безопасности успешно завершено"
                     """
+                    
+                    // Архивируем отчёты как артефакты Jenkins
+                    archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
                 }
             }
         }
