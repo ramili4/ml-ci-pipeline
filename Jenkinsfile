@@ -1,13 +1,6 @@
 pipeline {
     agent any
 
-    parameters {
-        string(name: 'MODEL_NAME', defaultValue: '', description: 'Override model name')
-        string(name: 'HUGGINGFACE_REPO', defaultValue: '', description: 'Override Hugging Face repo')
-        booleanParam(name: 'SKIP_VULNERABILITY_CHECK', defaultValue: false, description: 'Skip vulnerability check')
-        booleanParam(name: 'RUN_MODEL_TESTS', defaultValue: true, description: 'Run model tests')
-    }
-
     environment {
         MINIO_URL = "http://minio:9000"
         BUCKET_NAME = "models"
@@ -15,160 +8,176 @@ pipeline {
         NEXUS_DOCKER_PORT = "8082"
         DOCKER_REPO_NAME = "docker-hosted"
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
-        MINIO_MC_VERSION = "RELEASE.2023-02-28T00-12-59Z"
-        TRIVY_VERSION = "0.45.0"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
-        TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')
-        TELEGRAM_CHAT_ID = credentials('Chat_id')
-        MINIO_CREDS = credentials('minio-credentials')
-        NEXUS_CREDS = credentials('nexus-credentials')
-        TRIVY_CACHE_DIR = "/var/jenkins_home/trivy-cache"
-        MODEL_CACHE_DIR = "/var/jenkins_home/model-cache"
-    }
-
-    options {
-        timestamps()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 1, unit: 'HOURS')
-        disableConcurrentBuilds()
+        TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')  // Telegram Bot Token
+        TELEGRAM_CHAT_ID = credentials('Chat_id')          // Telegram Chat ID
+        DOCKER_HOST = "unix:///var/run/docker.sock"
+        BUILD_DATE = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
     }
 
     stages {
-        stage('Read Model Configuration') {
+        stage('Считываем конфигурацию модели') {
             steps {
                 script {
                     def modelConfig = readYaml file: 'model-config.yaml'
-                    env.MODEL_NAME = params.MODEL_NAME ?: modelConfig.model_name ?: "bert-tiny"
-                    env.HF_REPO = params.HUGGINGFACE_REPO ?: modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
-                    def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
-                    env.IMAGE_NAME = "ml-model-${modelNameLower}"
-                    env.IMAGE_TAG = "${BUILD_DATE}-${env.BUILD_NUMBER}"
-                    writeFile file: 'version.json', text: """{
-                        "model_name": "${env.MODEL_NAME}",
-                        "huggingface_repo": "${env.HF_REPO}",
-                        "build_date": "${BUILD_DATE}",
-                        "build_number": "${env.BUILD_NUMBER}",
-                        "image_name": "${env.IMAGE_NAME}",
-                        "image_tag": "${env.IMAGE_TAG}"
-                    }"""
-                    echo "📋 Using model: ${env.MODEL_NAME} from repo: ${env.HF_REPO}"
+                    env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
+                    env.HF_REPO = modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
+                    env.IMAGE_TAG = "${BUILD_DATE}-latest"
+                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}"
+                    echo "Using model: ${env.MODEL_NAME} from repo: ${env.HF_REPO}"
                 }
             }
         }
 
-        stage('Download Model') {
+        stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
-                    def modelCacheKey = env.HF_REPO.replaceAll("[/:]", "_")
-                    def modelCachePath = "${MODEL_CACHE_DIR}/${modelCacheKey}"
-                    def targetPath = "models/${env.MODEL_NAME}"
-                    def modelCached = fileExists(modelCachePath)
+                    sh """
+                        mkdir -p models/${env.MODEL_NAME}
+                        set -e
 
-                    if (!modelCached) {
-                        sh "mkdir -p ${targetPath}"
+                        for file in pytorch_model.bin config.json vocab.txt; do
+                            curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
+                                -o models/${env.MODEL_NAME}/\$file
+                        done
+                    """
+                    echo "Успешно скачал модель: ${env.MODEL_NAME}"
+                }
+            }
+        }
+
+        stage('Сохраняем модель в MinIO') {
+            steps {
+                script {
+                    def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
+                    def modelFiles = sh(script: "ls -A ${modelPath} | wc -l", returnStdout: true).trim()
+
+                    if (modelFiles.toInteger() == 0) {
+                        error("Ошибка: Папка для модели пуста! Выходим..")
+                    }
+
+                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
                         sh """
-                            curl -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                            -L https://huggingface.co/${env.HF_REPO}/resolve/main/pytorch_model.bin \
-                            -o ${targetPath}/pytorch_model.bin
+                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
+
+                            if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
+                                echo "Creating bucket ${BUCKET_NAME}..."
+                                /usr/local/bin/mc mb myminio/${BUCKET_NAME}
+                            fi
+
+                            /usr/local/bin/mc cp --recursive ${modelPath} myminio/${BUCKET_NAME}/
                         """
-                        echo "✅ Model downloaded successfully."
-                    } else {
-                        echo "✅ Using cached model."
                     }
                 }
             }
         }
 
-        stage('Test Model') {
-            when {
-                expression { return params.RUN_MODEL_TESTS }
-            }
+        stage('Собираем докер образ') {
             steps {
                 script {
-                    sh "echo Running model tests..."
+                    def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
+                    def imageName = "ml-model-${modelNameLower}"
+                    env.IMAGE_NAME = imageName
+
                     sh """
-                        docker run --rm \
-                            -v ${WORKSPACE}/models:/models \
-                            python:3.9-slim \
-                            bash -c "pip install transformers torch && python -c 'from transformers import AutoModel; AutoModel.from_pretrained(\"/models/${env.MODEL_NAME}\")'"
+                        docker build \
+                            --build-arg MINIO_URL=${MINIO_URL} \
+                            --build-arg BUCKET_NAME=${BUCKET_NAME} \
+                            --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
+                            -f Dockerfile .
                     """
-                    echo "✅ Model tests completed."
+                    echo "Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
 
-        stage('Save to MinIO and Build Docker Image') {
-            parallel {
-                stage('Save Model to MinIO') {
-                    steps {
-                        script {
-                            def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
-                            sh """
-                                /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_CREDS_USR} ${MINIO_CREDS_PSW} --quiet || true
-                                /usr/local/bin/mc mb myminio/${BUCKET_NAME} || true
-                                /usr/local/bin/mc cp --recursive ${modelPath} myminio/${BUCKET_NAME}/${env.MODEL_NAME}/
-                            """
-                            echo "✅ Model saved to MinIO."
-                        }
-                    }
-                }
-
-                stage('Build Docker Image') {
-                    steps {
-                        script {
-                            sh """
-                                docker build \
-                                    --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                                    -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} .
-                            """
-                            echo "✅ Docker image built: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Scan Image with Trivy') {
+        stage('Сканируем образ с помощью Trivy') {
             steps {
                 script {
+                    sh "mkdir -p trivy-reports"
+        
                     sh """
-                        trivy image --cache-dir=${TRIVY_CACHE_DIR} \
+                        trivy image --download-db-only
+        
+                        trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
-                            ${env.IMAGE_NAME}:${env.IMAGE_TAG} > trivy-scan-results.txt
+                            --format table \
+                            --scanners vuln \
+                            ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
+        
+                        trivy image --cache-dir /tmp/trivy \
+                            --severity HIGH,CRITICAL \
+                            --format json \
+                            ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json
                     """
-                    archiveArtifacts artifacts: 'trivy-scan-results.txt', fingerprint: true
-
-                    def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-scan-results.txt && echo true || echo false", returnStdout: true).trim()
-                    if (hasCritical == "true" && !params.SKIP_VULNERABILITY_CHECK) {
-                        error("❌ Critical vulnerabilities found. Build halted.")
+        
+                    echo "=== 📋 Результаты сканирования Trivy ==="
+                    sh "cat trivy-reports/scan-results.txt"
+        
+                    archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
+        
+                    // Send Trivy report to Telegram
+                    sh """
+                        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
+                        -F chat_id=${TELEGRAM_CHAT_ID} \
+                        -F document=@trivy-reports/scan-results.txt \
+                        -F caption="📊 *Trivy Scan Report* for ${env.IMAGE_NAME}:${IMAGE_TAG}" \
+                        -F parse_mode=Markdown
+                    """
+        
+                    def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-reports/scan-results.txt && echo true || echo false", returnStdout: true).trim()
+        
+                    if (hasCritical == "true") {
+                        def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', 
+                                              ok: 'Продолжить', 
+                                              parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
+                        if (userChoice == 'Нет') {
+                            error("Сборка остановлена из-за критических уязвимостей.")
+                        } else {
+                            echo "⚠️ Продолжаем несмотря на уязвимости."
+                        }
                     } else {
-                        echo "✅ No critical vulnerabilities detected."
+                        echo "✅ Критических уязвимостей не обнаружено."
                     }
                 }
             }
         }
 
-        stage('Push to Nexus') {
+
+        stage('Ставим тэг и пушим в Nexus') {
             steps {
-                script {
-                    sh """
-                        echo "${NEXUS_CREDS_PSW}" | docker login -u "${NEXUS_CREDS_USR}" --password-stdin http://${REGISTRY}
-                        docker tag ${env.IMAGE_NAME}:${env.IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${env.IMAGE_TAG}
-                        docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${env.IMAGE_TAG}
-                    """
-                    echo "✅ Image pushed to Nexus."
+                withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
+                    script {
+                        sh """
+                            echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
+
+                            docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                            docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
+
+                            docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
+                        """
+                        echo "Успешно закачали образ: ${env.IMAGE_NAME} в Nexus"
+                    }
                 }
             }
         }
 
-        stage('Cleanup') {
+        stage('Прибираемся-)') {
             steps {
                 script {
                     sh """
                         rm -rf models/${env.MODEL_NAME}
-                        docker rmi ${env.IMAGE_NAME}:${env.IMAGE_TAG} || true
+
+                        docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
+                        docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
+                        docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest | xargs -r docker rmi -f || true
+
+                        rm -f trivy-results.txt
                     """
-                    echo "✅ Workspace cleaned."
+                    echo "Прибрались! Ляпота то какая, красота!"
                 }
             }
         }
@@ -177,12 +186,34 @@ pipeline {
     post {
         success {
             script {
-                echo "✅ Pipeline completed successfully for ${env.MODEL_NAME}"
+                sh """
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="✅ *Pipeline Success!* 🎉\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}\\nStatus: SUCCESS" \
+                -d parse_mode=Markdown
+                """
             }
         }
+
         failure {
             script {
-                echo "❌ Pipeline failed. Check logs for details."
+                sh """
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="❌ *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали* 🚨\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}\\nStatus: FAILURE" \
+                -d parse_mode=Markdown
+                """
+            }
+        }
+
+        always {
+            script {
+                sh """
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="ℹ️ *Все гуд, выдохни! Скачал я ${env.IMAGE_NAME}*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
+                -d parse_mode=Markdown
+                """
             }
         }
     }
