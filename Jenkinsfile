@@ -188,7 +188,7 @@ pipeline {
                 sh """
                 curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
                 -d chat_id=${TELEGRAM_CHAT_ID} \
-                -d text="✅ *Pipeline Success!* 🎉\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}\\nStatus: SUCCESS" \
+                -d text="✅ *Успех! Скачал тебе  ${env.IMAGE_NAME} * 🎉\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}\\nStatus: SUCCESS" \
                 -d parse_mode=Markdown
                 """
             }
