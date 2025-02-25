@@ -1,6 +1,6 @@
-model_name: "mobilebert-uncased"
+model_name: "albert"
 version: "1.0.0"
-huggingface_repo: "google/mobilebert-uncased"
+huggingface_repo: "albert-base-v2"
 model_size: "90MB"
 
 model_files:
