@@ -5,9 +5,9 @@ pipeline {
         MINIO_URL = "http://minio:9000"
         BUCKET_NAME = "models"
         NEXUS_HOST = "localhost"
-        NEXUS_DOCKER_PORT = "8082"  
+        NEXUS_DOCKER_PORT = "8082"
         DOCKER_REPO_NAME = "docker-hosted"
-        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"  
+        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         DOCKER_HOST = "unix:///var/run/docker.sock"
         BUILD_DATE = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
@@ -21,7 +21,7 @@ pipeline {
                     env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
                     env.HF_REPO = modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
                     env.IMAGE_TAG = "${BUILD_DATE}-latest"
-                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}" 
+                    env.IMAGE_NAME = "ml-model-${env.MODEL_NAME}"
                     echo "Using model: ${env.MODEL_NAME} from repo: ${env.HF_REPO}"
                 }
             }
@@ -73,37 +73,18 @@ pipeline {
 
         stage('Собираем докер образ') {
             steps {
-                    script {
-                        def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
-                        def imageName = "ml-model-${modelNameLower}"
-                        env.IMAGE_NAME = imageName
-    
-                        sh """
-                            docker build \
-                                --build-arg MINIO_URL=${MINIO_URL} \
-                                --build-arg BUCKET_NAME=${BUCKET_NAME} \
-                                --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                                -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
-                                -f Dockerfile .
-                        """
-                        echo "Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
-                    }
-                }
-            }
-    
-
-        stage('Собираем докер образ') {
-            steps {
                 script {
                     def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
                     def imageName = "ml-model-${modelNameLower}"
-                    env.IMAGE_NAME = imageName // Update IMAGE_NAME for later use
+                    env.IMAGE_NAME = imageName
+
                     sh """
                         docker build \
                             --build-arg MINIO_URL=${MINIO_URL} \
                             --build-arg BUCKET_NAME=${BUCKET_NAME} \
                             --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} .
+                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
+                            -f Dockerfile .
                     """
                     echo "Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                 }
@@ -114,35 +95,30 @@ pipeline {
             steps {
                 script {
                     sh "mkdir -p trivy-reports"
-        
+
                     sh """
-                        echo "Обновляем базу данных Trivy..."
                         trivy image --download-db-only
-        
-                        echo "Начинаем сканирование образа..."
+
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format table \
                             --scanners vuln \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
-        
+
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format json \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json
                     """
-        
+
                     echo "=== 📋 Результаты сканирования Trivy ==="
                     sh "cat trivy-reports/scan-results.txt"
-        
-                    // Сохраняем отчёты для просмотра в Jenkins
+
                     archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
-        
-                    // Проверяем наличие критических уязвимостей
+
                     def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-reports/scan-results.txt && echo true || echo false", returnStdout: true).trim()
-        
+
                     if (hasCritical == "true") {
-                        // Включаем интерактивный выбор продолжать или нет
                         def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', 
                                               ok: 'Продолжить', 
                                               parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
@@ -158,19 +134,16 @@ pipeline {
             }
         }
 
-
         stage('Ставим тэг и пушим в Nexus') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
                         sh """
                             echo "$NEXUS_PASSWORD" | docker login -u "$NEXUS_USER" --password-stdin http://${REGISTRY}
-                            
-                            # Тэгируем с датой и latest
+
                             docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                             docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
-                            
-                            # Пушим оба тэга
+
                             docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                             docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
                         """
@@ -184,20 +157,17 @@ pipeline {
             steps {
                 script {
                     sh """
-                        echo "Удаляем модели сохраненные локально..."
                         rm -rf models/${env.MODEL_NAME}
 
-                        echo "Удаляем неиспользуемые Docker образы..."
                         docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
                         docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
                         docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest | xargs -r docker rmi -f || true
-                        
-                        echo "Удаляем отчет Trivy..."
+
                         rm -f trivy-results.txt
                     """
                     echo "Прибрались! Ляпота то какая, красота!"
                 }
             }
         }
-    } 
+    }
 }
