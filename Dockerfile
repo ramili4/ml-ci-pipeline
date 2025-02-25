@@ -1,0 +1,16 @@
+# Dockerfile
+FROM python:3.9-slim
+
+ARG MINIO_URL
+ARG BUCKET_NAME
+ARG MODEL_NAME
+
+ENV MINIO_URL=${MINIO_URL}
+ENV BUCKET_NAME=${BUCKET_NAME}
+ENV MODEL_NAME=${MODEL_NAME}
+
+WORKDIR /app
+
+COPY . .
+
+CMD ["python", "app.py"]
