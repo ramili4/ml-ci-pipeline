@@ -97,29 +97,38 @@ pipeline {
             steps {
                 script {
                     sh "mkdir -p trivy-reports"
-
+        
                     sh """
                         trivy image --download-db-only
-
+        
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format table \
                             --scanners vuln \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
-
+        
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format json \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json
                     """
-
+        
                     echo "=== 📋 Результаты сканирования Trivy ==="
                     sh "cat trivy-reports/scan-results.txt"
-
+        
                     archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
-
+        
+                    // Send Trivy report to Telegram
+                    sh """
+                        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
+                        -F chat_id=${TELEGRAM_CHAT_ID} \
+                        -F document=@trivy-reports/scan-results.txt \
+                        -F caption="📊 *Trivy Scan Report* for ${env.IMAGE_NAME}:${IMAGE_TAG}" \
+                        -F parse_mode=Markdown
+                    """
+        
                     def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-reports/scan-results.txt && echo true || echo false", returnStdout: true).trim()
-
+        
                     if (hasCritical == "true") {
                         def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', 
                                               ok: 'Продолжить', 
@@ -135,6 +144,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('Ставим тэг и пушим в Nexus') {
             steps {
