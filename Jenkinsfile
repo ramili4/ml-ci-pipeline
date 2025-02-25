@@ -9,8 +9,8 @@ pipeline {
         DOCKER_REPO_NAME = "docker-hosted"
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
-        TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')  // Telegram Bot Token
-        TELEGRAM_CHAT_ID = credentials('Chat_id')          // Telegram Chat ID
+        TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')
+        TELEGRAM_CHAT_ID = credentials('Chat_id')
         DOCKER_HOST = "unix:///var/run/docker.sock"
         BUILD_DATE = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
     }
@@ -97,27 +97,27 @@ pipeline {
             steps {
                 script {
                     sh "mkdir -p trivy-reports"
-        
+
                     sh """
                         trivy image --download-db-only
-        
+
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format table \
                             --scanners vuln \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt
-        
+
                         trivy image --cache-dir /tmp/trivy \
                             --severity HIGH,CRITICAL \
                             --format json \
                             ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json
                     """
-        
+
                     echo "=== 📋 Результаты сканирования Trivy ==="
                     sh "cat trivy-reports/scan-results.txt"
-        
+
                     archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
-        
+
                     // Send Trivy report to Telegram
                     sh """
                         curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
@@ -126,9 +126,9 @@ pipeline {
                         -F caption="📊 *Trivy Scan Report* for ${env.IMAGE_NAME}:${IMAGE_TAG}" \
                         -F parse_mode=Markdown
                     """
-        
+
                     def hasCritical = sh(script: "grep -q 'CRITICAL' trivy-reports/scan-results.txt && echo true || echo false", returnStdout: true).trim()
-        
+
                     if (hasCritical == "true") {
                         def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', 
                                               ok: 'Продолжить', 
@@ -144,7 +144,6 @@ pipeline {
                 }
             }
         }
-
 
         stage('Ставим тэг и пушим в Nexus') {
             steps {
@@ -165,7 +164,7 @@ pipeline {
             }
         }
 
-        stage('Прибираемся-)') {
+        stage('Прибираемся') {
             steps {
                 script {
                     sh """
@@ -201,17 +200,6 @@ pipeline {
                 curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
                 -d chat_id=${TELEGRAM_CHAT_ID} \
                 -d text="❌ *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали* 🚨\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}\\nStatus: FAILURE" \
-                -d parse_mode=Markdown
-                """
-            }
-        }
-
-        always {
-            script {
-                sh """
-                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                -d chat_id=${TELEGRAM_CHAT_ID} \
-                -d text="ℹ️ *Все гуд, выдохни! Скачал я ${env.IMAGE_NAME}*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
                 -d parse_mode=Markdown
                 """
             }
