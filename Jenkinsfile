@@ -38,8 +38,8 @@ pipeline {
 
                         for file in pytorch_model.bin config.json vocab.txt; do
                             curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/$file \
-                                -o models/${env.MODEL_NAME}/$file
+                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
+                                -o models/${env.MODEL_NAME}/\$file
                         done
                     """
                     echo "Успешно скачал модель: ${env.MODEL_NAME}"
