@@ -50,38 +50,6 @@ pipeline {
         disableConcurrentBuilds()
     }
 
-    stages {
-        stage('Setup Tools') {
-            steps {
-                script {
-                    // Установить или обновить необходимые инструменты с определенными версиями
-                    sh """
-                        # Создать директории кэша
-                        mkdir -p ${TRIVY_CACHE_DIR} ${MODEL_CACHE_DIR}
-                        
-                        # Установить клиент MinIO с фиксацией версии
-                        if [ ! -f /usr/local/bin/mc ] || ! /usr/local/bin/mc --version | grep -q "${MINIO_MC_VERSION}"; then
-                            echo "Installing MinIO client version ${MINIO_MC_VERSION}..."
-                            curl -o /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/archive/mc.${MINIO_MC_VERSION}
-                            chmod +x /tmp/mc
-                            sudo mv /tmp/mc /usr/local/bin/mc
-                        else
-                            echo "MinIO client already installed with correct version"
-                        fi
-                        
-                        # Установить Trivy с фиксацией версии
-                        if [ ! -f /usr/local/bin/trivy ] || ! /usr/local/bin/trivy --version | grep -q "${TRIVY_VERSION}"; then
-                            echo "Installing Trivy version ${TRIVY_VERSION}..."
-                            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v${TRIVY_VERSION}
-                        else
-                            echo "Trivy already installed with correct version"
-                        fi
-                    """
-                    
-                    echo "✅ Настройка инструментов завершена"
-                }
-            }
-        }
 
         stage('Read Model Configuration') {
             steps {
