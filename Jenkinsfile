@@ -64,7 +64,7 @@ pipeline {
                             echo "Installing MinIO client version ${MINIO_MC_VERSION}..."
                             curl -o /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/archive/mc.${MINIO_MC_VERSION}
                             chmod +x /tmp/mc
-                            mv /tmp/mc /usr/local/bin/mc
+                            sudo mv /tmp/mc /usr/local/bin/mc
                         else
                             echo "MinIO client already installed with correct version"
                         fi
