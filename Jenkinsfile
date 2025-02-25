@@ -9,6 +9,8 @@ pipeline {
         DOCKER_REPO_NAME = "docker-hosted"
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
+        TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')  // Telegram Bot Token
+        TELEGRAM_CHAT_ID = credentials('Chat_id')          // Telegram Chat ID
         DOCKER_HOST = "unix:///var/run/docker.sock"
         BUILD_DATE = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
     }
@@ -167,6 +169,41 @@ pipeline {
                     """
                     echo "Прибрались! Ляпота то какая, красота!"
                 }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                sh """
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="✅ *Pipeline Success!* 🎉\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}\\nStatus: SUCCESS" \
+                -d parse_mode=Markdown
+                """
+            }
+        }
+
+        failure {
+            script {
+                sh """
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="❌ *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали* 🚨\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}\\nStatus: FAILURE" \
+                -d parse_mode=Markdown
+                """
+            }
+        }
+
+        always {
+            script {
+                sh """
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                -d chat_id=${TELEGRAM_CHAT_ID} \
+                -d text="ℹ️ *Все гуд, выдохни! Скачал я ${env.IMAGE_NAME}*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
+                -d parse_mode=Markdown
+                """
             }
         }
     }
