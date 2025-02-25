@@ -601,7 +601,7 @@ always {
                 archiveArtifacts artifacts: 'build-report.md', fingerprint: true
                 
                 // Очистка кеша при необходимости
-                if (sh(script: "du -sm ${TRIVY_CACHE_DIR} | awk '{print $1}'", returnStdout: true).trim().toInteger() > 1000) {
+                if (sh(script: "du -sm ${TRIVY_CACHE_DIR} | awk '{print \$1}'", returnStdout: true).trim().toInteger() > 1000) {
                     echo "🧹 Кеш Trivy превысил 1GB, выполняется очистка..."
                     sh "rm -rf ${TRIVY_CACHE_DIR}/* || true"
                 }
