@@ -71,31 +71,26 @@ pipeline {
             }
         }
 
-        stage('Создаем Dockerfile') {
+        stage('Собираем докер образ') {
             steps {
-                script {
-                    def dockerfileContent = """
-                    FROM python:3.9-slim
-
-                    ARG MINIO_URL
-                    ARG BUCKET_NAME
-                    ARG MODEL_NAME
-
-                    ENV MINIO_URL=\${MINIO_URL}
-                    ENV BUCKET_NAME=\${BUCKET_NAME}
-                    ENV MODEL_NAME=\${MODEL_NAME}
-
-                    WORKDIR /app
-
-                    COPY . . 
-
-                    CMD ["python", "app.py"]
-                    """
-                    writeFile file: 'Dockerfile', text: dockerfileContent
-                    echo "Dockerfile создан успешно!"
+                    script {
+                        def modelNameLower = env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")
+                        def imageName = "ml-model-${modelNameLower}"
+                        env.IMAGE_NAME = imageName
+    
+                        sh """
+                            docker build \
+                                --build-arg MINIO_URL=${MINIO_URL} \
+                                --build-arg BUCKET_NAME=${BUCKET_NAME} \
+                                --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                                -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
+                                -f Dockerfile .
+                        """
+                        echo "Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                    }
                 }
             }
-        }
+    
 
         stage('Собираем докер образ') {
             steps {
