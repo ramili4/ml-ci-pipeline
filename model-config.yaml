@@ -1,6 +1,6 @@
-model_name: "albert"
+model_name: "albert-base-v2"
 version: "1.0.0"
-huggingface_repo: "albert-base-v2"
+huggingface_repo: "albert"
 model_size: "90MB"
 
 model_files:
