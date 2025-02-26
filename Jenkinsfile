@@ -468,7 +468,7 @@ pipeline {
                     - Время сборки: ${buildDuration}
                     
                     *Доступ к образу:*
-                    \`docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}\`
+                    docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                     
                     *Статус: УСПЕХ* 🥳
                     EOF
