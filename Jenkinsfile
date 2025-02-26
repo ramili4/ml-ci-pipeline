@@ -394,10 +394,10 @@ pipeline {
                                 
                                 ## Использование
                                 
-                                \`\`\`bash
+                                
                                 docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                                 docker run -p 8000:8000 ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
-                                \`\`\`
+                                
                                 
                                 ## Безопасность
                                 
