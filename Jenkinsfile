@@ -181,7 +181,7 @@ pipeline {
                                     EOF
                                 """
                                 
-                                // Build with cache optimization
+                                // Сборка с оптимизаций под кеш
                                 sh """
                                     docker build \
                                         --build-arg BUILDKIT_INLINE_CACHE=1 \
@@ -229,7 +229,7 @@ pipeline {
                             try {
                                 echo "🔍 Начинаем сканирование образа на уязвимости"
                                 
-                                // Scan for vulnerabilities (including MEDIUM)
+                                // Сканируем на уязвимости (включая MEDIUM)
                                 sh """
                                     trivy image --cache-dir=${TRIVY_CACHE_DIR} \
                                         --severity HIGH,CRITICAL,MEDIUM \
@@ -242,7 +242,7 @@ pipeline {
                                         --format json \
                                         ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json || true
                                         
-                                    # Generate SBOM
+                                    # Генерируем SBOM
                                     trivy image --cache-dir=${TRIVY_CACHE_DIR} \
                                         --format cyclonedx \
                                         ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/sbom.xml || true
@@ -253,7 +253,7 @@ pipeline {
                                 
                                 archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
                                 
-                                // Send Trivy report to Telegram
+                                // Отправляем Trivy отчеты через Telegram
                                 sh """
                                     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
                                     -F chat_id=${TELEGRAM_CHAT_ID} \
@@ -262,7 +262,7 @@ pipeline {
                                     -F parse_mode=Markdown
                                 """
                                 
-                                // Count vulnerabilities by severity
+                                // Считаем уязвимости по уровню критичности
                                 def criticalCount = sh(script: "grep -c 'CRITICAL' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
                                 def highCount = sh(script: "grep -c 'HIGH' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
                                 def mediumCount = sh(script: "grep -c 'MEDIUM' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
@@ -283,7 +283,7 @@ pipeline {
                                 }
                             } catch (Exception e) {
                                 echo "⚠️ Ошибка в процессе сканирования: ${e.message}"
-                                // Continue build despite Trivy issues
+                                // Продолжаем
                             }
                         }
                     }
@@ -298,7 +298,7 @@ pipeline {
                             try {
                                 echo "🧪 Запускаем базовые тесты Docker образа"
                                 
-                                // Start container for testing
+                                // 
                                 sh """
                                     # Запускаем контейнер для тестирования
                                     docker run -d --name test-${env.IMAGE_NAME} ${env.IMAGE_NAME}:${IMAGE_TAG}
@@ -333,7 +333,7 @@ pipeline {
                                 sh "docker stop test-${env.IMAGE_NAME} || true"
                                 sh "docker rm test-${env.IMAGE_NAME} || true"
                                 
-                                // Ask if we should continue despite test failures
+                                // Спрашиваем продолжать ли?
                                 def userChoice = input message: '🧪 Тесты не прошли. Хотите продолжить сборку?', 
                                                   ok: 'Продолжить', 
                                                   parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
@@ -356,18 +356,18 @@ pipeline {
                         try {
                             echo "📤 Публикуем Docker образ в Nexus"
                             
-                            // Login to Nexus
+                            //Логинимся в Nexus
                             retry(3) {
                                 sh "echo \"$NEXUS_PASSWORD\" | docker login -u \"$NEXUS_USER\" --password-stdin http://${REGISTRY}"
                             }
                             
-                            // Tag images
+                            // Ставим тэни на образ
                             sh """
                                 docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                                 docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
                             """
                             
-                            // Push images with retry
+                            // Пушим образ
                             retry(3) {
                                 sh """
                                     docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
@@ -377,7 +377,7 @@ pipeline {
                             
                             echo "✅ Успешно опубликовали образ: ${env.IMAGE_NAME} в Nexus"
                             
-                            // Generate image documentation
+                            // Генерируем документацию образа
                             sh """
                                 cat > image-info.md << EOF
                                 # ${env.IMAGE_NAME}:${IMAGE_TAG}
@@ -407,7 +407,7 @@ pipeline {
                             
                             archiveArtifacts artifacts: 'image-info.md', fingerprint: true
                             
-                            // Record metrics
+                            // Метрики
                             def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}'", returnStdout: true).trim()
                             echo "📊 Размер образа: ${imageSize}"
                             
@@ -428,7 +428,7 @@ pipeline {
                 script {
                     echo "🧹 Очищаем рабочую область..."
                     
-                    // Clean up while preserving cache
+                    // CПрибираемся сохраняя кеш
                     sh """
                         rm -rf models/${env.MODEL_NAME} || true
                         
@@ -479,7 +479,7 @@ pipeline {
                     -d parse_mode=Markdown
                 """
                 
-                // Record metrics for future analysis
+                // Записываем метрики для анализа
                 def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}' || echo 'Unknown'", returnStdout: true).trim()
                 echo "📊 Метрики сборки:"
                 echo "- Время сборки: ${buildDuration}"
@@ -513,7 +513,7 @@ pipeline {
                     -d parse_mode=Markdown
                 """
                 
-                // Preserve logs for failed builds
+                // Сохраняем логи неудачных билдов
                 archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
             }
         }
@@ -527,7 +527,7 @@ pipeline {
                     -d parse_mode=Markdown
                 """
                 
-                // Clean workspace but preserve key files
+                
                 cleanWs(patterns: [[pattern: 'model-config.yaml', type: 'INCLUDE']], 
                         deleteDirs: true)
             }
