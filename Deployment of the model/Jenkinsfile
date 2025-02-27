@@ -85,6 +85,9 @@ pipeline {
                         envVars.add([name: 'METRICS_PORT', value: '9090'])
                     }
                     
+                    // Calculate CPU limit as decimal
+                    def cpuLimitValue = (params.RESOURCE_CPU_LIMIT.replace('m', '') as int) / 1000
+                    
                     // Generate Docker Compose file for standalone servers
                     sh """
                         cat > deployment/${params.DEPLOYMENT_ENV}/docker-compose.yml << EOF
@@ -106,7 +109,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${params.RESOURCE_CPU_LIMIT.replace('m', '') as int / 1000}'
+          cpus: '${cpuLimitValue}'
           memory: ${params.RESOURCE_MEMORY_LIMIT}
 EOF
 
@@ -165,6 +168,11 @@ EOF
                         "- name: ${it.name}\n          value: \"${it.value}\"" 
                     }.join('\n          ')
                     
+                    // Calculate CPU request as half of limit
+                    def cpuRequest = "${(params.RESOURCE_CPU_LIMIT.replace('m', '') as int) / 2}m"
+                    // Calculate memory request as half of limit
+                    def memRequest = "${(params.RESOURCE_MEMORY_LIMIT.replace('Gi', '') as int) / 2}Gi"
+                    
                     // Generate Kubernetes deployment files
                     sh """
                         cat > deployment/${params.DEPLOYMENT_ENV}/deployment.yaml << EOF
@@ -202,8 +210,8 @@ spec:
             cpu: ${params.RESOURCE_CPU_LIMIT}
             memory: ${params.RESOURCE_MEMORY_LIMIT}
           requests:
-            cpu: ${params.RESOURCE_CPU_LIMIT.replace('m', '') as int / 2 + 'm'}
-            memory: ${params.RESOURCE_MEMORY_LIMIT.replace('Gi', '') as int / 2 + 'Gi'}
+            cpu: ${cpuRequest}
+            memory: ${memRequest}
         env:
           ${envVarsFormatted}
         readinessProbe:
