@@ -11,8 +11,8 @@ pipeline {
         MINIO_URL = "http://localhost:9000"
         BUCKET_NAME = "models"
         NEXUS_HOST = "localhost"
-        NEXUS_DOCKER_PORT = "8081"
-        DOCKER_REPO_NAME = "docker-images"
+        NEXUS_DOCKER_PORT = "8082"
+        DOCKER_REPO_NAME = "docker-hosted"
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')
