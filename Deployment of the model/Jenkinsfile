@@ -15,7 +15,7 @@ pipeline {
     }
     
     environment {
-        REGISTRY = "${params.DEPLOYMENT_ENV == 'production' ? 'production-registry:8082' : 'localhost:8082'}"
+        REGISTRY = "${params.DEPLOYMENT_ENV == 'production' ? 'production-registry:8081' : 'localhost:8081'}"
         DOCKER_REPO_NAME = "docker-hosted"
         HELM_REPO_URL = "http://nexus:8081/repository/helm-hosted/"
         KUBECONFIG_ID = "${params.DEPLOYMENT_ENV}-kubeconfig"
