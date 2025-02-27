@@ -8,7 +8,7 @@ pipeline {
     }
 
     environment {
-        MINIO_URL = "http://minio:9000"
+        MINIO_URL = "http://localhost:9000"
         BUCKET_NAME = "models"
         NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"
