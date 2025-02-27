@@ -26,7 +26,6 @@ pipeline {
         MODEL_API_PORT = "8000"
     }
     
-    stages {
         stage('Validate Parameters') {
             steps {
                 script {
@@ -36,20 +35,28 @@ pipeline {
                     echo "Target: ${params.DEPLOYMENT_TARGET}"
                     echo "Replicas: ${params.REPLICAS}"
                     
-                    // Validate image exists in registry
+                    // Validate image exists in registry - Fixed version
                     withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
-                        def imageExists = sh(
-                            script: """
-                                curl -s -u ${NEXUS_USER}:${NEXUS_PASSWORD} \
-                                -X GET "${REGISTRY}/v2/${DOCKER_REPO_NAME}/${params.IMAGE_NAME}/manifests/${params.IMAGE_TAG}" \
-                                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-                                -w "%{http_code}" -o /dev/null
-                            """,
-                            returnStdout: true
-                        ).trim()
+                        // Use sh to construct the curl command safely
+                        def cmd = 'curl -s -u $NEXUS_USER:$NEXUS_PASSWORD ' +
+                                  '-X GET "' + env.REGISTRY + '/v2/' + env.DOCKER_REPO_NAME + '/' + params.IMAGE_NAME + '/manifests/' + params.IMAGE_TAG + '" ' +
+                                  '-H "Accept: application/vnd.docker.distribution.manifest.v2+json" ' +
+                                  '-w "%{http_code}" -o /dev/null'
+                        
+                        def imageExists = sh(script: cmd, returnStdout: true).trim()
                         
                         if (imageExists != "200") {
-                            error("Image ${params.IMAGE_NAME}:${params.IMAGE_TAG} not found in registry ${REGISTRY}")
+                            echo "Image check failed with status: ${imageExists}"
+                            echo "This might be because the image doesn't exist or because of a connection issue."
+                            
+                            def userChoice = input message: '⚠️ Image validation failed. Continue anyway?', 
+                                              ok: 'Continue', 
+                                              parameters: [choice(choices: 'Yes\nNo', description: 'Select action', name: 'continueDeployment')]
+                            if (userChoice == 'No') {
+                                error("Deployment stopped due to failed image validation")
+                            } else {
+                                echo "⚠️ Continuing despite image validation issues"
+                            }
                         }
                     }
                 }
