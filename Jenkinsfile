@@ -12,7 +12,7 @@ pipeline {
         BUCKET_NAME = "models"
         NEXUS_HOST = "localhost"
         NEXUS_DOCKER_PORT = "8082"
-        DOCKER_REPO_NAME = "docker-hosted"
+        DOCKER_REPO_NAME = "docker-images"
         REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
         HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')
