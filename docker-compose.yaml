@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   jenkins:
-    image: jenkins:lts
+    image: jenkins-docker:latest
     ports:
       - "8080:8080"
       - "50000:50000"
@@ -11,7 +11,7 @@ services:
       - ~/.kube:/home/jenkins/.kube
       - /mnt/d/my_models:/opt/ml-models-wsl  # Mount your local folder
       - /var/run/docker.sock:/var/run/docker.sock # Only if you need docker-in-docker
-    user: 1000:1000
+    user: 1000:1001
     depends_on:
       - jenkins-docker # Only if you need docker-in-docker
       - minio
@@ -42,7 +42,7 @@ services:
       - jenkins-network
 
   nexus:
-    image: sonatype/nexus3
+    image: sonatype/nexus3:3.45.0
     container_name: nexus
     ports:
       - "8081:8081"  # Nexus Web UI
