@@ -39,7 +39,7 @@ pipeline {
                         env.HF_FILES = modelConfig.files ?: "pytorch_model.bin,config.json,vocab.txt"
                         env.RUN_TESTS = modelConfig.run_tests ?: "true"
                         
-                        // Log configuration
+                        // Записываем конфигурацию
                         echo "=== Конфигурация модели ==="
                         echo "Модель: ${env.MODEL_NAME}"
                         echo "Репозиторий: ${env.HF_REPO}"
@@ -60,15 +60,13 @@ pipeline {
                 script {
                     def cacheHit = false
                     def modelFiles = env.HF_FILES.split(',')
-                    
-                    // Create cache directory if it doesn't exist
                     sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
                     
-                    // Check if model exists in cache
+                    // Проверка модели в кэше
                     def cacheStatus = sh(script: """
                         for file in ${modelFiles.join(' ')}; do
                             if [ ! -f "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file" ]; then
-                                echo "missing"
+                                echo "Модель в кэше не найдена"
                                 exit 0
                             fi
                         done
@@ -115,7 +113,7 @@ pipeline {
                     
                     echo "Успешно получили модель: ${env.MODEL_NAME} (из кэша: ${cacheHit})"
                     
-                    // Generate model metadata
+                    // Генерируем метадату модели
                     sh """
                         cat > models/${env.MODEL_NAME}/metadata.json << EOF
                         {
@@ -169,7 +167,7 @@ pipeline {
                             try {
                                 echo "🔨 Начинаем сборку Docker образа: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                                 
-                                // Create build args file for better readability
+                                // Создаем аргументы сборки для лучшей читабельности
                                 sh """
                                     cat > docker-build-args.txt << EOF
                                     MINIO_URL=${MINIO_URL}
@@ -193,7 +191,7 @@ pipeline {
                                         --build-arg BUILD_DATE=${BUILD_DATE} \
                                         --build-arg BUILD_ID=${BUILD_ID} \
                                         -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
-                                        -f Dockerfile .
+                                        -f Dockerfile .  
                                 """
                                 
                                 echo "✅ Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
@@ -411,7 +409,7 @@ pipeline {
                             def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}'", returnStdout: true).trim()
                             echo "📊 Размер образа: ${imageSize}"
                             
-                            // Calculate build times
+                            // Время сборки
                             def duration = currentBuild.durationString.replace(' and counting', '')
                             echo "⏱️ Время сборки: ${duration}"
                         } catch (Exception e) {
@@ -428,7 +426,7 @@ pipeline {
                 script {
                     echo "🧹 Очищаем рабочую область..."
                     
-                    // CПрибираемся сохраняя кеш
+                    // Прибираемся сохраняя кеш
                     sh """
                         rm -rf models/${env.MODEL_NAME} || true
                         
