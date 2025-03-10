@@ -1,58 +1,62 @@
 import gradio as gr
+from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
 import os
-import json
-import requests
-from pathlib import Path
+import shutil
 
-# Получаем переменные окружения
-MINIO_URL = os.environ.get("MINIO_URL", "")
-BUCKET_NAME = os.environ.get("BUCKET_NAME", "")
-MODEL_NAME = os.environ.get("MODEL_NAME", "")
-MODEL_VERSION = os.environ.get("MODEL_VERSION", "")
+# Path where the model is stored
+MODEL_ROOT_DIR = "/models"
 
-def predict(input_text):
-    """Функция для выполнения предсказания модели"""
+# Ensure the models directory exists
+if not os.path.exists(MODEL_ROOT_DIR):
+    os.makedirs(MODEL_ROOT_DIR)
+
+# Clean up any previous models before downloading a new one
+for item in os.listdir(MODEL_ROOT_DIR):
+    item_path = os.path.join(MODEL_ROOT_DIR, item)
+    if os.path.isdir(item_path):
+        print(f"🗑️ Removing old model: {item_path}")
+        shutil.rmtree(item_path)
+
+# Assuming the model is downloaded dynamically and extracted here
+# We find the newly downloaded model folder inside /models
+model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
+
+if len(model_subdirs) == 0:
+    raise ValueError("❌ No model found in /models. Please download a model first.")
+elif len(model_subdirs) > 1:
+    raise ValueError(f"⚠️ Multiple models found in /models: {model_subdirs}. Please keep only one.")
+
+MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
+print(f"✅ Using model from: {MODEL_DIR}")
+
+# Load tokenizer and model
+try:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+    model = AutoModelForQuestionAnswering.from_pretrained(MODEL_DIR)
+    qa_pipeline = pipeline("question-answering", model=model, tokenizer=tokenizer)
+    print(f"✅ Model loaded successfully from {MODEL_DIR}")
+except Exception as e:
+    raise RuntimeError(f"❌ Model Load Error: {e}")
+
+# Chatbot function
+def chatbot(question, context):
+    if not question or not context:
+        return "❌ Please provide both a question and a context."
+
     try:
-        # Здесь должна быть логика обращения к вашей модели
-        # Это просто заглушка, замените на реальную логику
-        result = {"input": input_text, "prediction": f"Предсказание для: {input_text}"}
-        return json.dumps(result, ensure_ascii=False, indent=2)
+        response = qa_pipeline(question=question, context=context)
+        return response["answer"]
     except Exception as e:
-        return f"Ошибка: {str(e)}"
+        return f"❌ Error: {str(e)}"
 
-def display_model_info():
-    """Отображение информации о модели"""
-    info = {
-        "MODEL_NAME": MODEL_NAME,
-        "MODEL_VERSION": MODEL_VERSION,
-        "MINIO_URL": MINIO_URL,
-        "BUCKET_NAME": BUCKET_NAME
-    }
-    return json.dumps(info, ensure_ascii=False, indent=2)
+# Create Gradio UI
+iface = gr.Interface(
+    fn=chatbot,
+    inputs=[gr.Textbox(label="Question"), gr.Textbox(label="Context")],
+    outputs="text",
+    title="Question Answering Chatbot",
+    description="Ask a question based on the provided context."
+)
 
-# Создаем интерфейс Gradio
-with gr.Blocks(title=f"Интерфейс модели {MODEL_NAME}") as demo:
-    gr.Markdown(f"## 🤖 Интерфейс модели: {MODEL_NAME}")
-    
-    with gr.Tab("Предсказание"):
-        with gr.Row():
-            with gr.Column():
-                input_text = gr.Textbox(label="Входные данные", lines=5)
-                submit_btn = gr.Button("Выполнить предсказание")
-            
-            with gr.Column():
-                output = gr.JSON(label="Результат")
-        
-        submit_btn.click(fn=predict, inputs=input_text, outputs=output)
-    
-    with gr.Tab("Информация о модели"):
-        model_info = gr.JSON(label="Информация")
-        refresh_btn = gr.Button("Обновить информацию")
-        refresh_btn.click(fn=display_model_info, inputs=None, outputs=model_info)
-        # Загружаем информацию при запуске
-        demo.load(fn=display_model_info, inputs=None, outputs=model_info)
-
-# Запускаем Gradio сервер
-if __name__ == "__main__":
-    port = int(os.environ.get("GRADIO_SERVER_PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+# Launch Gradio
+iface.launch(server_name="0.0.0.0", server_port=7860)
