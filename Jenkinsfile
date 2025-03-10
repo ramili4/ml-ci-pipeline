@@ -159,53 +159,65 @@ pipeline {
             }
         }
 
-        stage('Параллельные задачи') {
-            parallel {
-                stage('Собираем докер образ') {
-                    steps {
-                        script {
-                            try {
-                                echo "🔨 Начинаем сборку Docker образа: ${env.IMAGE_NAME}:${IMAGE_TAG}"
-                                
-                                // Создаем аргументы сборки для лучшей читабельности
-                                sh """
-                                    cat > docker-build-args.txt << EOF
-                                    MINIO_URL=${MINIO_URL}
-                                    BUCKET_NAME=${BUCKET_NAME}
-                                    MODEL_NAME=${env.MODEL_NAME}
-                                    MODEL_VERSION=${env.MODEL_VERSION}
-                                    BUILD_DATE=${BUILD_DATE}
-                                    BUILD_ID=${BUILD_ID}
-                                    EOF
-                                """
-                                
-                                // Сборка с оптимизаций под кеш
-                                sh """
-                                    docker build \
-                                        --build-arg BUILDKIT_INLINE_CACHE=1 \
-                                        --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
-                                        --build-arg MINIO_URL=${MINIO_URL} \
-                                        --build-arg BUCKET_NAME=${BUCKET_NAME} \
-                                        --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                                        --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
-                                        --build-arg BUILD_DATE=${BUILD_DATE} \
-                                        --build-arg BUILD_ID=${BUILD_ID} \
-                                        -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
-                                        -f Dockerfile .  
-                                """
-                                
-                                echo "✅ Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
-                            } catch (Exception e) {
-                                currentBuild.result = 'FAILURE'
-                                error("Ошибка при сборке Docker образа: ${e.message}")
-                            }
+     stage('Параллельные задачи') {
+        parallel {
+            stage('Собираем докер образ') {
+                steps {
+                    script {
+                        try {
+                            echo "🔨 Начинаем сборку Docker образа: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                            
+                            // Создаем аргументы сборки для лучшей читабельности
+                            sh """
+                                cat > docker-build-args.txt << EOF
+                                MINIO_URL=${MINIO_URL}
+                                BUCKET_NAME=${BUCKET_NAME}
+                                MODEL_NAME=${env.MODEL_NAME}
+                                MODEL_VERSION=${env.MODEL_VERSION}
+                                BUILD_DATE=${BUILD_DATE}
+                                BUILD_ID=${BUILD_ID}
+                                GRADIO_SERVER_PORT=7860
+                                EOF
+                            """
+                            
+                            // Проверяем наличие градио в requirements.txt
+                            sh """
+                                if [ -f requirements.txt ] && ! grep -q "gradio" requirements.txt; then
+                                    echo "gradio>=3.50.2" >> requirements.txt
+                                fi
+                            """
+                            
+                            // Сборка с оптимизаций под кеш
+                            sh """
+                                docker build \
+                                    --build-arg BUILDKIT_INLINE_CACHE=1 \
+                                    --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
+                                    --build-arg MINIO_URL=${MINIO_URL} \
+                                    --build-arg BUCKET_NAME=${BUCKET_NAME} \
+                                    --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                                    --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
+                                    --build-arg BUILD_DATE=${BUILD_DATE} \
+                                    --build-arg BUILD_ID=${BUILD_ID} \
+                                    --build-arg GRADIO_SERVER_PORT=7860 \
+                                    -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
+                                    -f Dockerfile .  
+                            """
+                            
+                            echo "✅ Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                        } catch (Exception e) {
+                            currentBuild.result = 'FAILURE'
+                            error("Ошибка при сборке Docker образа: ${e.message}")
                         }
                     }
                 }
-                
-                stage('Подготовка Trivy') {
-                    steps {
-                        script {
+            }
+            
+            stage('Подготовка Trivy') {
+                steps {
+                    script {
+                        try {
+                            echo "🔍 Подготовка Trivy для сканирования"
+                            
                             sh """
                                 mkdir -p ${TRIVY_CACHE_DIR}
                                 mkdir -p trivy-reports
@@ -213,12 +225,18 @@ pipeline {
                                 # Обновляем базу данных Trivy
                                 trivy image --cache-dir=${TRIVY_CACHE_DIR} --download-db-only
                             """
+                            
+                            echo "✅ Подготовка Trivy завершена успешно"
+                        } catch (Exception e) {
+                            currentBuild.result = 'FAILURE'
+                            error("Ошибка при подготовке Trivy: ${e.message}")
                         }
                     }
                 }
             }
         }
-        
+    }
+            
         stage('Проверка образа') {
             parallel {
                 stage('Сканируем образ с помощью Trivy') {
