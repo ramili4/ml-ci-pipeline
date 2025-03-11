@@ -30,13 +30,16 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Download model from MinIO
-RUN python -c "from minio import Minio; \
-                client = Minio('${MINIO_URL}'.replace('http://', ''), access_key='minioadmin', secret_key='minioadmin', secure=False); \
-                objects = client.list_objects('${BUCKET_NAME}', prefix='${MODEL_NAME}/', recursive=True); \
-                import os; \
-                os.makedirs('/models/${MODEL_NAME}', exist_ok=True); \
-                for obj in objects: \
-                    client.fget_object('${BUCKET_NAME}', obj.object_name, '/models/' + obj.object_name.split('/', 1)[1])"
+RUN python -c "import os; from minio import Minio; \
+    client = Minio(os.getenv('MINIO_URL', 'localhost:9000').replace('http://', ''), \
+                   access_key=os.getenv('MINIO_ACCESS_KEY'), \
+                   secret_key=os.getenv('MINIO_SECRET_KEY'), \
+                   secure=False); \
+    bucket = os.getenv('BUCKET_NAME', 'models'); \
+    prefix = os.getenv('MODEL_NAME', 'bert-tiny') + '/'; \
+    os.makedirs(f'/models/{prefix}', exist_ok=True); \
+    for obj in client.list_objects(bucket, prefix=prefix, recursive=True): \
+        client.fget_object(bucket, obj.object_name, f'/models/{obj.object_name.split("/", 1)[1]}')"
 
 # Copy application files into the container
 COPY . .
