@@ -74,6 +74,22 @@ pipeline {
             }
         }
 
+        stage('Копируем модель в рабочую область') {
+            steps {
+                script {
+                    sh """
+                        # Create directory structure
+                        mkdir -p ${WORKSPACE}/models/${env.MODEL_NAME}
+                        
+                        # Copy files from cache to workspace
+                        cp -r ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/* ${WORKSPACE}/models/${env.MODEL_NAME}/
+                        
+                        # Verify files were copied
+                        ls -la ${WORKSPACE}/models/${env.MODEL_NAME}/
+                    """
+                }
+            }
+        }
 
         stage('Сохраняем модель в MinIO') {
             steps {
