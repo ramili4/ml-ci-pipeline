@@ -55,18 +55,18 @@ pipeline {
             }
         }
 
-        stage('Скачиваем модель из Hugging Face') {
+       stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
                     sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
                     
                     retry(env.MAX_RETRIES.toInteger()) {
                         sh """
-                            for file in ${env.HF_FILES.split(',').join(' ')}; do
+                            for file in ${env.HF_FILES.replaceAll('[\\[\\]]', '').split(',').join(' ')}; do
                                 echo "Скачиваем \$file..."
                                 curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                    -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
-                                    -o ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file
+                                    -L "https://huggingface.co/${env.HF_REPO}/resolve/main/\$file" \
+                                    -o "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file"
                             done
                         """
                     }
