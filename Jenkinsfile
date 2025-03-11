@@ -138,6 +138,14 @@ pipeline {
                             ls -l /var/jenkins_home/tmp-models/
                         """
         
+                        // Ensure the model is inside the workspace for Docker build
+                        sh """
+                            echo "🚛 Moving model to workspace for Docker..."
+                            mkdir -p ${WORKSPACE}/tmp-models/
+                            cp -r /var/jenkins_home/tmp-models/${env.MODEL_NAME} ${WORKSPACE}/tmp-models/
+                            ls -l ${WORKSPACE}/tmp-models/
+                        """
+        
                         echo "✅ Модель успешно подготовлена!"
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
@@ -146,6 +154,7 @@ pipeline {
                 }
             }
         }
+
 
 
         stage('Подготовка Flask API') {
