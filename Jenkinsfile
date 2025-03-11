@@ -36,17 +36,17 @@ pipeline {
                         env.MODEL_VERSION = modelConfig.version ?: "latest"
                         env.IMAGE_TAG = "${BUILD_DATE}-${env.MODEL_VERSION}"
                         env.IMAGE_NAME = "ml-model-${env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")}"
-                        env.HF_FILES = modelConfig.files ?: "pytorch_model.bin,config.json,vocab.txt"
+                        env.HF_FILES = modelConfig.model_files ?: ["pytorch_model.bin", "config.json", "vocab.txt"]
                         env.RUN_TESTS = modelConfig.run_tests ?: "true"
-                        
-                        // Записываем конфигурацию
+
+                        // Debugging Output
                         echo "=== Конфигурация модели ==="
                         echo "Модель: ${env.MODEL_NAME}"
                         echo "Репозиторий: ${env.HF_REPO}"
                         echo "Версия: ${env.MODEL_VERSION}"
                         echo "Тег образа: ${env.IMAGE_TAG}"
                         echo "Имя образа: ${env.IMAGE_NAME}"
-                        echo "Файлы для загрузки: ${env.HF_FILES}"
+                        echo "Файлы для загрузки: ${env.HF_FILES.join(', ')}"
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при чтении конфигурации: ${e.message}")
@@ -58,61 +58,56 @@ pipeline {
         stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
-                    def cacheHit = false
-                    def modelFiles = env.HF_FILES.split(',')
-                    sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
-                    
-                    // Проверка модели в кэше
-                    def cacheStatus = sh(script: """
-                        for file in ${modelFiles.join(' ')}; do
-                            if [ ! -f "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file" ]; then
-                                echo "Модель в кэше не найдена"
-                                exit 0
-                            fi
-                        done
-                        echo "complete"
-                    """, returnStdout: true).trim()
-                    
-                    if (cacheStatus == "complete") {
-                        echo "? Модель найдена в кэше, копируем..."
-                        sh "mkdir -p models/${env.MODEL_NAME} && cp -r ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/* models/${env.MODEL_NAME}/"
-                        cacheHit = true
-                    } else {
-                        echo "? Модель не найдена в кэше, скачиваем из Hugging Face..."
-                        
-                        sh "mkdir -p models/${env.MODEL_NAME}"
-                        
+                    def cacheHit = true
+                    def modelPath = "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
+                    sh "mkdir -p ${modelPath}"
+                    sh "mkdir -p models/${env.MODEL_NAME}"
+
+                    def missingFiles = []
+                    env.HF_FILES.each { file ->
+                        def filePath = "${modelPath}/${file}"
+                        def cacheExists = sh(script: "[ -f ${filePath} ] && echo 'exists' || echo 'missing'", returnStdout: true).trim()
+
+                        if (cacheExists == "missing") {
+                            missingFiles.add(file)
+                        }
+                    }
+
+                    if (missingFiles.size() > 0) {
+                        cacheHit = false
+                        echo "? ${missingFiles.size()} файлов отсутствуют в кэше. Скачиваем..."
                         retry(env.MAX_RETRIES.toInteger()) {
                             try {
                                 timeout(time: 30, unit: 'MINUTES') {
-                                    sh """
-                                        set -e
-                                        for file in ${modelFiles.join(' ')}; do
-                                            echo "Скачиваем \$file..."
+                                    missingFiles.each { file ->
+                                        echo "⬇️ Скачиваем ${file}..."
+                                        sh """
                                             curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
-                                                -o models/${env.MODEL_NAME}/\$file
-                                                
-                                            # Копируем в кэш
-                                            cp models/${env.MODEL_NAME}/\$file ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/
-                                        done
-                                    """
+                                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/${file} \
+                                                -o ${modelPath}/${file}
+                                        """
+                                    }
                                 }
                             } catch (Exception e) {
-                                echo "?? Ошибка при скачивании: ${e.message}. Повторная попытка..."
+                                echo "❌ Ошибка при скачивании: ${e.message}. Повторная попытка..."
                                 throw e
                             }
                         }
+                    } else {
+                        echo "? Все файлы найдены в кэше. Используем их."
                     }
-                    
+
+                    // Copy files to working directory
+                    sh "cp -r ${modelPath}/* models/${env.MODEL_NAME}/"
+
                     // Validate downloaded files
                     def fileCount = sh(script: "ls -A models/${env.MODEL_NAME} | wc -l", returnStdout: true).trim().toInteger()
                     if (fileCount == 0) {
-                        error("Ошибка: Папка для модели пуста после загрузки! Выходим..")
+                        error("❌ Ошибка: Папка для модели пуста после загрузки! Выходим...")
                     }
-                    
-                    echo "Успешно получили модель: ${env.MODEL_NAME} (из кэша: ${cacheHit})"
-                    
+
+                    echo "✅ Успешно получили модель: ${env.MODEL_NAME} (из кэша: ${cacheHit})"
+
                     // Генерируем метадату модели
                     sh """
                         cat > models/${env.MODEL_NAME}/metadata.json << EOF
@@ -130,6 +125,9 @@ pipeline {
                 }
             }
         }
+    }
+}
+
 
         stage('Сохраняем модель в MinIO') {
             steps {
