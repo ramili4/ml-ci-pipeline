@@ -159,6 +159,149 @@ pipeline {
             }
         }
 
+     stage('Подготовка Flask API') {
+        steps {
+            script {
+                try {
+                    echo "🔧 Начинаем подготовку Flask API для модели"
+                    
+                    // Backup existing app.py if present
+                    sh """
+                        if [ -f app.py ]; then
+                            mv app.py app.py.gradio.bak
+                        fi
+                        
+                        # Create Flask API app.py
+                        cat > app.py << 'EOF'
+    from flask import Flask, request, jsonify
+    from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
+    import os
+    import shutil
+    
+    app = Flask(__name__)
+    
+    # Path where the model is stored
+    MODEL_ROOT_DIR = "/models"
+    
+    # Ensure the models directory exists
+    if not os.path.exists(MODEL_ROOT_DIR):
+        os.makedirs(MODEL_ROOT_DIR)
+    
+    # Find the model folder
+    def load_model():
+        # Clean up any previous models before downloading a new one
+        for item in os.listdir(MODEL_ROOT_DIR):
+            item_path = os.path.join(MODEL_ROOT_DIR, item)
+            if os.path.isdir(item_path):
+                print(f"🗑️ Removing old model: {item_path}")
+                shutil.rmtree(item_path)
+    
+        # Find the newly downloaded model folder inside /models
+        model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
+    
+        if len(model_subdirs) == 0:
+            raise ValueError("❌ No model found in /models. Please download a model first.")
+        elif len(model_subdirs) > 1:
+            raise ValueError(f"⚠️ Multiple models found in /models: {model_subdirs}. Please keep only one.")
+    
+        MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
+        print(f"✅ Using model from: {MODEL_DIR}")
+    
+        # Load tokenizer and model
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+            model = AutoModelForQuestionAnswering.from_pretrained(MODEL_DIR)
+            qa_pipeline = pipeline("question-answering", model=model, tokenizer=tokenizer)
+            print(f"✅ Model loaded successfully from {MODEL_DIR}")
+            return qa_pipeline
+        except Exception as e:
+            raise RuntimeError(f"❌ Model Load Error: {e}")
+    
+    # Load the model
+    qa_pipeline = load_model()
+    
+    @app.route('/api/health', methods=['GET'])
+    def health_check():
+        return jsonify({"status": "healthy"}), 200
+    
+    @app.route('/api/predict', methods=['POST'])
+    def predict():
+        try:
+            data = request.get_json()
+            
+            # Check if required fields are present
+            if not data or 'question' not in data or 'context' not in data:
+                return jsonify({"error": "Missing required fields: 'question' and 'context'"}), 400
+            
+            # Extract question and context
+            question = data['question']
+            context = data['context']
+            
+            # Generate answer
+            response = qa_pipeline(question=question, context=context)
+            
+            return jsonify({
+                "answer": response["answer"],
+                "score": float(response["score"]),
+                "start": response["start"],
+                "end": response["end"]
+            }), 200
+            
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/info', methods=['GET'])
+    def model_info():
+        # Read metadata if it exists
+        model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
+        if not model_subdirs:
+            return jsonify({"error": "No model loaded"}), 404
+        
+        MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
+        metadata_path = os.path.join(MODEL_DIR, "metadata.json")
+        
+        if os.path.exists(metadata_path):
+            import json
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            return jsonify(metadata), 200
+        else:
+            return jsonify({"model_dir": MODEL_DIR}), 200
+    
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=5000)
+    EOF
+                    
+                        # Update requirements.txt to include Flask
+                        if [ -f requirements.txt ]; then
+                            # Check if flask is already in requirements
+                            if ! grep -q "flask" requirements.txt; then
+                                echo "flask>=2.0.0" >> requirements.txt
+                                echo "gunicorn>=20.1.0" >> requirements.txt
+                            fi
+                        else
+                            echo "transformers>=4.10.0" > requirements.txt
+                            echo "flask>=2.0.0" >> requirements.txt
+                            echo "gunicorn>=20.1.0" >> requirements.txt
+                        fi
+                        
+                        # Update Dockerfile to use the correct port and runtime
+                        if [ -f Dockerfile ]; then
+                            sed -i 's/GRADIO_SERVER_PORT=7860/API_PORT=5000/g' Dockerfile
+                            sed -i 's/EXPOSE \\${GRADIO_SERVER_PORT}/EXPOSE \\${API_PORT}/g' Dockerfile
+                            sed -i 's/gradio/flask gunicorn/g' Dockerfile
+                        fi
+                    """
+                    
+                    echo "✅ Flask API успешно подготовлена"
+                } catch (Exception e) {
+                    currentBuild.result = 'FAILURE'
+                    error("Ошибка при подготовке Flask API: ${e.message}")
+                }
+            }
+        }
+    }    
+
      stage('Параллельные задачи') {
         parallel {
             stage('Собираем докер образ') {
@@ -305,65 +448,73 @@ pipeline {
                     }
                 }
                 
-                stage('Smoke тесты') {
-                    when {
-                        expression { return env.RUN_TESTS == 'true' }
-                    }
-                    steps {
-                        script {
-                            try {
-                                echo "🧪 Запускаем базовые тесты Docker образа"
-                                
-                                // 
-                                sh """
-                                    # Запускаем контейнер для тестирования
-                                    docker run -d --name test-${env.IMAGE_NAME} ${env.IMAGE_NAME}:${IMAGE_TAG}
-                                    
-                                    # Проверяем, что контейнер запустился успешно
-                                    if [ \$(docker inspect -f '{{.State.Running}}' test-${env.IMAGE_NAME}) = "true" ]; then
-                                        echo "✅ Контейнер успешно запущен"
-                                    else
-                                        echo "❌ Контейнер не запустился"
-                                        exit 1
-                                    fi
-                                    
-                                    # Получаем логи контейнера
-                                    docker logs test-${env.IMAGE_NAME} > container-logs.txt
-                                    
-                                    # Проверяем логи на наличие ошибок
-                                    if grep -i "error\\|exception\\|failure" container-logs.txt; then
-                                        echo "⚠️ В логах обнаружены ошибки!"
-                                    else
-                                        echo "✅ Логи не содержат ошибок"
-                                    fi
-                                    
-                                    # Останавливаем тестовый контейнер
-                                    docker stop test-${env.IMAGE_NAME} || true
-                                    docker rm test-${env.IMAGE_NAME} || true
-                                """
-                                
-                                archiveArtifacts artifacts: 'container-logs.txt', fingerprint: true
-                                echo "✅ Smoke тесты пройдены успешно"
-                            } catch (Exception e) {
-                                echo "⚠️ Ошибка при выполнении тестов: ${e.message}"
-                                sh "docker stop test-${env.IMAGE_NAME} || true"
-                                sh "docker rm test-${env.IMAGE_NAME} || true"
-                                
-                                // Спрашиваем продолжать ли?
-                                def userChoice = input message: '🧪 Тесты не прошли. Хотите продолжить сборку?', 
-                                                  ok: 'Продолжить', 
-                                                  parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
-                                if (userChoice == 'Нет') {
-                                    error("Сборка остановлена из-за неудачных тестов.")
-                                } else {
-                                    echo "⚠️ Продолжаем несмотря на неудачные тесты."
-                                }
-                            }
+        stage('Smoke тесты') {
+            when {
+                expression { return env.RUN_TESTS == 'true' }
+            }
+            steps {
+                script {
+                    try {
+                        echo "🧪 Запускаем базовые тесты Docker образа с Flask API"
+                        
+                        sh """
+                            # Запускаем контейнер для тестирования
+                            docker run -d -p 5000:5000 --name test-${env.IMAGE_NAME} ${env.IMAGE_NAME}:${IMAGE_TAG}
+                            
+                            # Проверяем, что контейнер запустился успешно
+                            if [ \$(docker inspect -f '{{.State.Running}}' test-${env.IMAGE_NAME}) = "true" ]; then
+                                echo "✅ Контейнер успешно запущен"
+                            else
+                                echo "❌ Контейнер не запустился"
+                                exit 1
+                            fi
+                            
+                            # Даем время на инициализацию Flask API
+                            sleep 10
+                            
+                            # Проверяем endpoint здоровья API
+                            if curl -s http://localhost:5000/api/health | grep -q "healthy"; then
+                                echo "✅ API Endpoint проверки здоровья работает корректно"
+                            else
+                                echo "❌ API не отвечает корректно"
+                                exit 1
+                            fi
+                            
+                            # Получаем логи контейнера
+                            docker logs test-${env.IMAGE_NAME} > container-logs.txt
+                            
+                            # Проверяем логи на наличие ошибок
+                            if grep -i "error\\|exception\\|failure" container-logs.txt; then
+                                echo "⚠️ В логах обнаружены ошибки!"
+                            else
+                                echo "✅ Логи не содержат ошибок"
+                            fi
+                            
+                            # Останавливаем тестовый контейнер
+                            docker stop test-${env.IMAGE_NAME} || true
+                            docker rm test-${env.IMAGE_NAME} || true
+                        """
+                        
+                        archiveArtifacts artifacts: 'container-logs.txt', fingerprint: true
+                        echo "✅ Smoke тесты пройдены успешно"
+                    } catch (Exception e) {
+                        echo "⚠️ Ошибка при выполнении тестов: ${e.message}"
+                        sh "docker stop test-${env.IMAGE_NAME} || true"
+                        sh "docker rm test-${env.IMAGE_NAME} || true"
+                        
+                        // Спрашиваем продолжать ли?
+                        def userChoice = input message: '🧪 Тесты не прошли. Хотите продолжить сборку?', 
+                                          ok: 'Продолжить', 
+                                          parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
+                        if (userChoice == 'Нет') {
+                            error("Сборка остановлена из-за неудачных тестов.")
+                        } else {
+                            echo "⚠️ Продолжаем несмотря на неудачные тесты."
                         }
                     }
                 }
             }
-        }
+        }        
 
         stage('Публикация образа') {
             steps {
