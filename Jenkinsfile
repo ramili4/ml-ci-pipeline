@@ -175,7 +175,7 @@ pipeline {
                             fi
         
                             # Copy only the model files, NOT another subfolder
-                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME}/* ${modelPath}/
+                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
                         """
                     }
                 }
