@@ -596,13 +596,17 @@ EOF
             }
         }
 
-        stage('Прибираемся') {
+       stage('Прибираемся') {
             steps {
                 script {
                     echo "?? Очищаем рабочую область..."
-                    
-                    // Прибираемся сохраняя кеш
+        
+                    // Очистка временных файлов, моделей и Docker образов
                     sh """
+                        # Удаляем временную папку с моделью
+                        rm -rf /tmp-models || true
+        
+                        # Удаляем модели внутри рабочей области
                         rm -rf models/${env.MODEL_NAME} || true
                         
                         # Удаляем Docker образы
@@ -615,12 +619,11 @@ EOF
                         # Удаляем ненужные файлы
                         rm -f trivy-results.txt container-logs.txt docker-build-args.txt || true
                     """
-                    
+        
                     echo "? Прибрались! Ляпота-то какая, красота!"
                 }
             }
         }
-    }
 
     post {
         success {
