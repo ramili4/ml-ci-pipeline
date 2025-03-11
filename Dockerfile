@@ -33,7 +33,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Copy the downloaded model from Jenkins agent's build context
 # Avoid build errors if "tmp-models" is empty or missing
-COPY tmp-models /models || echo "⚠️ Warning: tmp-models directory is empty, skipping copy."
+COPY tmp-models /models
 
 # Copy application files into the container
 COPY src/app.py /app/app.py
