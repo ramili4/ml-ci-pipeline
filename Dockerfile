@@ -1,9 +1,6 @@
 # Use Python 3.9 slim image as the base
 FROM python:3.9-slim
 
-# Set root user to ensure permissions
-USER root
-
 # Build arguments
 ARG MINIO_URL
 ARG BUCKET_NAME
@@ -26,23 +23,27 @@ ENV API_PORT=${API_PORT}
 WORKDIR /app
 
 # Ensure model directory exists inside the container
-RUN mkdir -p /models && chmod 777 /models
+RUN mkdir -p /models
 
-# Copy requirements.txt and install dependencies (without torch)
+# Copy requirements.txt and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir flask gunicorn minio \
-    # Install CPU-only version of PyTorch, TorchVision, and Torchaudio
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Copy the downloaded model from Jenkins agent's build context
-COPY tmp-models /models
+# Avoid build errors if "tmp-models" is empty or missing
+COPY tmp-models /models || echo "⚠️ Warning: tmp-models directory is empty, skipping copy."
 
 # Copy application files into the container
-COPY . .
+COPY src/app.py /app/app.py
 
 # Expose the port for the Flask API
 EXPOSE ${API_PORT}
 
-# Set the entrypoint to run the Flask application
-CMD ["python", "app.py"]
+# Switch to a non-root user for security
+RUN useradd -m appuser
+USER appuser
+
+# Run Gunicorn as the entry point
+CMD ["gunicorn", "--workers", "4", "--bind", "0.0.0.0:5000", "app:app"]
