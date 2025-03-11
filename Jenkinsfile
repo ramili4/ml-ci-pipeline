@@ -65,7 +65,7 @@ pipeline {
                             for file in ${env.HF_FILES.replaceAll('[\\[\\]]', '').split(',').join(' ')}; do
                                 echo "Скачиваем \$file..."
                                 curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                    -L "https://huggingface.co/${env.HF_REPO}/resolve/main/\$file" \
+                                    -L "https://huggingface.co/${env.HF_REPO}/${env.MODEL_NAME}/resolve/main/\$file" \
                                     -o "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file"
                             done
                         """
