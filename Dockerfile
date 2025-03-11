@@ -20,8 +20,6 @@ ENV MODEL_VERSION=${MODEL_VERSION}
 ENV BUILD_DATE=${BUILD_DATE}
 ENV BUILD_ID=${BUILD_ID}
 ENV API_PORT=${API_PORT}
-ENV MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-ENV MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
 
 # Set working directory inside the container
 WORKDIR /app
@@ -37,8 +35,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
 RUN python -c "import os; \
     from minio import Minio; \
     minio_url = os.getenv('MINIO_URL', 'localhost:9000').replace('http://', ''); \
-    access_key = os.getenv('MINIO_ACCESS_KEY'); \
-    secret_key = os.getenv('MINIO_SECRET_KEY'); \
     bucket = os.getenv('BUCKET_NAME', 'models'); \
     model_name = os.getenv('MODEL_NAME', 'bert-tiny'); \
     prefix = model_name + '/'; \
