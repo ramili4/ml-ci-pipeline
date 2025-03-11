@@ -181,6 +181,22 @@ pipeline {
             }
         }
 
+        stage('Move Model to Build Context') {
+            steps {
+                script {
+                    def modelPath = "/var/jenkins_home/tmp-models/${env.MODEL_NAME}"
+                    def workspaceModelPath = "${WORKSPACE}/tmp-models"
+        
+                    // Ensure the target directory exists in the workspace
+                    sh "mkdir -p ${workspaceModelPath}"
+        
+                    // Move the model to the workspace so Docker can access it
+                    sh "cp -r ${modelPath} ${workspaceModelPath}/"
+                }
+            }
+        }
+
+
         
 
         stage('Подготовка Flask API') {
