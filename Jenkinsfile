@@ -119,46 +119,34 @@ pipeline {
             }
         }
 
-      stage('Создание папки для модели и копирование из MinIO') {
+      
+        stage('Подготовка модели') {
             steps {
                 script {
-                    def modelPath = "/var/jenkins_home/tmp-models/${env.MODEL_NAME}"
-                    sh "mkdir -p ${modelPath}"
-                    
-                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
-                        sh """
-                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
-                            
-                            if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
-                                echo "Creating bucket ${BUCKET_NAME}..."
-                                /usr/local/bin/mc mb myminio/${BUCKET_NAME}
-                            fi
+                    try {
+                        echo "🚀 Подготавливаем модель для контейнера..."
         
-                            # Copy only the model files, NOT another subfolder
-                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
+                        sh """
+                            echo "🛠️ Cleaning up old models..."
+                            rm -rf /var/jenkins_home/tmp-models/*
+        
+                            echo "📥 Copying model: ${env.MODEL_NAME}"
+                            mkdir -p /var/jenkins_home/tmp-models/${env.MODEL_NAME}
+                            cp -r /var/jenkins_home/model_cache/${env.MODEL_NAME}/${env.MODEL_VERSION}/* /var/jenkins_home/tmp-models/${env.MODEL_NAME}/
+        
+                            echo "📂 Verifying copied model:"
+                            ls -l /var/jenkins_home/tmp-models/
                         """
+        
+                        echo "✅ Модель успешно подготовлена!"
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        error("❌ Ошибка при подготовке модели: ${e.message}")
                     }
                 }
             }
         }
 
-        stage('Move Model to Build Context') {
-            steps {
-                script {
-                    def modelPath = "/var/jenkins_home/tmp-models/${env.MODEL_NAME}"
-                    def workspaceModelPath = "${WORKSPACE}/tmp-models"
-        
-                    // Ensure the target directory exists in the workspace
-                    sh "mkdir -p ${workspaceModelPath}"
-        
-                    // Move the model to the workspace so Docker can access it
-                    sh "cp -r ${modelPath} ${workspaceModelPath}/"
-                }
-            }
-        }
-
-
-        
 
         stage('Подготовка Flask API') {
             steps {
