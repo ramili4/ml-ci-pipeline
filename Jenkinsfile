@@ -58,43 +58,22 @@ pipeline {
         stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
-                    def modelFiles = env.HF_FILES.split(',')
-                    def modelPath = "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
-                    sh "mkdir -p ${modelPath} models/${env.MODEL_NAME}"
-        
-                    // Check if all files exist in cache
-                    def missingFiles = modelFiles.findAll { file ->
-                        return sh(script: "[ -f ${modelPath}/${file} ] && echo exists || echo missing", returnStdout: true).trim() == "missing"
+                    sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
+                    
+                    retry(env.MAX_RETRIES.toInteger()) {
+                        sh """
+                            for file in ${env.HF_FILES.split(',').join(' ')}; do
+                                echo "Скачиваем \$file..."
+                                curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                                    -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
+                                    -o ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file
+                            done
+                        """
                     }
-        
-                    if (missingFiles.isEmpty()) {
-                        echo "✅ Все файлы найдены в кэше. Используем их."
-                        sh "cp -r ${modelPath}/* models/${env.MODEL_NAME}/"
-                    } else {
-                        echo "❌ Отсутствующие файлы: ${missingFiles.join(', ')}. Скачиваем..."
-                        retry(env.MAX_RETRIES.toInteger()) {
-                            sh """
-                                for file in ${missingFiles.join(' ')}; do
-                                    curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                        -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
-                                        -o ${modelPath}/\$file
-                                done
-                            """
-                        }
-                        sh "cp -r ${modelPath}/* models/${env.MODEL_NAME}/"
-                    }
-        
-                    // Generate metadata
-                    writeFile file: "models/${env.MODEL_NAME}/metadata.json", text: """{
-                        "model_name": "${env.MODEL_NAME}",
-                        "huggingface_repo": "${env.HF_REPO}",
-                        "version": "${env.MODEL_VERSION}",
-                        "build_date": "${BUILD_DATE}",
-                        "build_id": "${BUILD_ID}"
-                    }"""
                 }
             }
         }
+
 
         stage('Сохраняем модель в MinIO') {
             steps {
