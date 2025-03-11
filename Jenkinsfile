@@ -511,7 +511,7 @@ pipeline {
                 }
             }
         }
- 
+    }
 
     post {
         success {
@@ -596,7 +596,7 @@ pipeline {
             }
         }
     }
-    }
-}
+ }
+
 
    
