@@ -652,3 +652,48 @@ EOF
         failure {
             script {
                 def failureStage = currentBuild.rawBuild.getCauses().get(0).getShortDescription()
+                
+                sh """
+                    # Готовим данные для уведомления о сбое
+                    cat > failure-notification.md << EOF
+                    ❌ *Pipeline Завершился с Ошибкой!* 🚨
+                    
+                    *Информация о сборке:*
+                    - Job: ${env.JOB_NAME}
+                    - Build: #${env.BUILD_NUMBER}
+                    - Модель: ${env.MODEL_NAME}
+                    - Этап сбоя: ${failureStage}
+                    
+                    *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали*
+                    
+                    [Просмотр логов](${env.BUILD_URL}console)
+                    EOF
+                    
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                    -d chat_id=${TELEGRAM_CHAT_ID} \
+                    -d text="\$(cat failure-notification.md)" \
+                    -d parse_mode=Markdown
+                """
+                
+                // Сохраняем логи неудачных билдов
+                archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
+            }
+        }
+
+        always {
+            script {
+                sh """
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                    -d chat_id=${TELEGRAM_CHAT_ID} \
+                    -d text="ℹ️ *Все гуд, выдохни! Процесс для ${env.IMAGE_NAME} завершен*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
+                    -d parse_mode=Markdown
+                """
+                
+                
+                cleanWs(deleteDirs: true)
+            }
+        }
+    }
+}
+}
+}
