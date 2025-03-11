@@ -58,76 +58,43 @@ pipeline {
         stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
-                    def cacheHit = true
+                    def modelFiles = env.HF_FILES.split(',')
                     def modelPath = "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
-                    sh "mkdir -p ${modelPath}"
-                    sh "mkdir -p models/${env.MODEL_NAME}"
-
-                    def missingFiles = []
-                    env.HF_FILES.each { file ->
-                        def filePath = "${modelPath}/${file}"
-                        def cacheExists = sh(script: "[ -f ${filePath} ] && echo 'exists' || echo 'missing'", returnStdout: true).trim()
-
-                        if (cacheExists == "missing") {
-                            missingFiles.add(file)
-                        }
+                    sh "mkdir -p ${modelPath} models/${env.MODEL_NAME}"
+        
+                    // Check if all files exist in cache
+                    def missingFiles = modelFiles.findAll { file ->
+                        return sh(script: "[ -f ${modelPath}/${file} ] && echo exists || echo missing", returnStdout: true).trim() == "missing"
                     }
-
-                    if (missingFiles.size() > 0) {
-                        cacheHit = false
-                        echo "? ${missingFiles.size()} файлов отсутствуют в кэше. Скачиваем..."
-                        retry(env.MAX_RETRIES.toInteger()) {
-                            try {
-                                timeout(time: 30, unit: 'MINUTES') {
-                                    missingFiles.each { file ->
-                                        echo "⬇️ Скачиваем ${file}..."
-                                        sh """
-                                            curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/${file} \
-                                                -o ${modelPath}/${file}
-                                        """
-                                    }
-                                }
-                            } catch (Exception e) {
-                                echo "❌ Ошибка при скачивании: ${e.message}. Повторная попытка..."
-                                throw e
-                            }
-                        }
+        
+                    if (missingFiles.isEmpty()) {
+                        echo "✅ Все файлы найдены в кэше. Используем их."
+                        sh "cp -r ${modelPath}/* models/${env.MODEL_NAME}/"
                     } else {
-                        echo "? Все файлы найдены в кэше. Используем их."
-                    }
-
-                    // Copy files to working directory
-                    sh "cp -r ${modelPath}/* models/${env.MODEL_NAME}/"
-
-                    // Validate downloaded files
-                    def fileCount = sh(script: "ls -A models/${env.MODEL_NAME} | wc -l", returnStdout: true).trim().toInteger()
-                    if (fileCount == 0) {
-                        error("❌ Ошибка: Папка для модели пуста после загрузки! Выходим...")
-                    }
-
-                    echo "✅ Успешно получили модель: ${env.MODEL_NAME} (из кэша: ${cacheHit})"
-
-                    // Генерируем метадату модели
-                    sh """
-                        cat > models/${env.MODEL_NAME}/metadata.json << EOF
-                        {
-                            "model_name": "${env.MODEL_NAME}",
-                            "huggingface_repo": "${env.HF_REPO}",
-                            "version": "${env.MODEL_VERSION}",
-                            "build_date": "${BUILD_DATE}",
-                            "build_id": "${BUILD_ID}",
-                            "jenkins_job": "${env.JOB_NAME}",
-                            "jenkins_build": "${env.BUILD_NUMBER}"
+                        echo "❌ Отсутствующие файлы: ${missingFiles.join(', ')}. Скачиваем..."
+                        retry(env.MAX_RETRIES.toInteger()) {
+                            sh """
+                                for file in ${missingFiles.join(' ')}; do
+                                    curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                                        -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
+                                        -o ${modelPath}/\$file
+                                done
+                            """
                         }
-                        EOF
-                    """
+                        sh "cp -r ${modelPath}/* models/${env.MODEL_NAME}/"
+                    }
+        
+                    // Generate metadata
+                    writeFile file: "models/${env.MODEL_NAME}/metadata.json", text: """{
+                        "model_name": "${env.MODEL_NAME}",
+                        "huggingface_repo": "${env.HF_REPO}",
+                        "version": "${env.MODEL_VERSION}",
+                        "build_date": "${BUILD_DATE}",
+                        "build_id": "${BUILD_ID}"
+                    }"""
                 }
             }
         }
-    }
-}
-
 
         stage('Сохраняем модель в MinIO') {
             steps {
