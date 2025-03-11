@@ -53,8 +53,6 @@ pipeline {
                     }
                 }
             }
-            }
-            }
         }
 
         stage('Скачиваем модель из Hugging Face') {
@@ -76,11 +74,11 @@ pipeline {
                     """, returnStdout: true).trim()
                     
                     if (cacheStatus == "complete") {
-                        echo "✅ Модель найдена в кэше, копируем..."
+                        echo "? Модель найдена в кэше, копируем..."
                         sh "mkdir -p models/${env.MODEL_NAME} && cp -r ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/* models/${env.MODEL_NAME}/"
                         cacheHit = true
                     } else {
-                        echo "❌ Модель не найдена в кэше, скачиваем из Hugging Face..."
+                        echo "? Модель не найдена в кэше, скачиваем из Hugging Face..."
                         
                         sh "mkdir -p models/${env.MODEL_NAME}"
                         
@@ -101,7 +99,7 @@ pipeline {
                                     """
                                 }
                             } catch (Exception e) {
-                                echo "⚠️ Ошибка при скачивании: ${e.message}. Повторная попытка..."
+                                echo "?? Ошибка при скачивании: ${e.message}. Повторная попытка..."
                                 throw e
                             }
                         }
@@ -156,7 +154,7 @@ pipeline {
                         """
                     }
                     
-                    echo "✅ Модель успешно сохранена в MinIO"
+                    echo "? Модель успешно сохранена в MinIO"
                 }
             }
         }
@@ -165,7 +163,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        echo "🔧 Начинаем подготовку Flask API для модели"
+                        echo "?? Начинаем подготовку Flask API для модели"
                         
                         // Backup existing app.py if present
                         sh """
@@ -175,104 +173,104 @@ pipeline {
                             
                             # Create Flask API app.py
                             cat > app.py << 'EOF'
-        from flask import Flask, request, jsonify
-        from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
-        import os
-        import shutil
+from flask import Flask, request, jsonify
+from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
+import os
+import shutil
+
+app = Flask(__name__)
+
+# Path where the model is stored
+MODEL_ROOT_DIR = "/models"
+
+# Ensure the models directory exists
+if not os.path.exists(MODEL_ROOT_DIR):
+    os.makedirs(MODEL_ROOT_DIR)
+
+# Find the model folder
+def load_model():
+    # Clean up any previous models before downloading a new one
+    for item in os.listdir(MODEL_ROOT_DIR):
+        item_path = os.path.join(MODEL_ROOT_DIR, item)
+        if os.path.isdir(item_path):
+            print(f"??? Removing old model: {item_path}")
+            shutil.rmtree(item_path)
+
+    # Find the newly downloaded model folder inside /models
+    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
+
+    if len(model_subdirs) == 0:
+        raise ValueError("? No model found in /models. Please download a model first.")
+    elif len(model_subdirs) > 1:
+        raise ValueError(f"?? Multiple models found in /models: {model_subdirs}. Please keep only one.")
+
+    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
+    print(f"? Using model from: {MODEL_DIR}")
+
+    # Load tokenizer and model
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+        model = AutoModelForQuestionAnswering.from_pretrained(MODEL_DIR)
+        qa_pipeline = pipeline("question-answering", model=model, tokenizer=tokenizer)
+        print(f"? Model loaded successfully from {MODEL_DIR}")
+        return qa_pipeline
+    except Exception as e:
+        raise RuntimeError(f"? Model Load Error: {e}")
+
+# Load the model
+qa_pipeline = load_model()
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy"}), 200
+
+@app.route('/api/predict', methods=['POST'])
+def predict():
+    try:
+        data = request.get_json()
         
-        app = Flask(__name__)
+        # Check if required fields are present
+        if not data or 'question' not in data or 'context' not in data:
+            return jsonify({"error": "Missing required fields: 'question' and 'context'"}), 400
         
-        # Path where the model is stored
-        MODEL_ROOT_DIR = "/models"
+        # Extract question and context
+        question = data['question']
+        context = data['context']
         
-        # Ensure the models directory exists
-        if not os.path.exists(MODEL_ROOT_DIR):
-            os.makedirs(MODEL_ROOT_DIR)
+        # Generate answer
+        response = qa_pipeline(question=question, context=context)
         
-        # Find the model folder
-        def load_model():
-            # Clean up any previous models before downloading a new one
-            for item in os.listdir(MODEL_ROOT_DIR):
-                item_path = os.path.join(MODEL_ROOT_DIR, item)
-                if os.path.isdir(item_path):
-                    print(f"🗑️ Removing old model: {item_path}")
-                    shutil.rmtree(item_path)
+        return jsonify({
+            "answer": response["answer"],
+            "score": float(response["score"]),
+            "start": response["start"],
+            "end": response["end"]
+        }), 200
         
-            # Find the newly downloaded model folder inside /models
-            model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
-        
-            if len(model_subdirs) == 0:
-                raise ValueError("❌ No model found in /models. Please download a model first.")
-            elif len(model_subdirs) > 1:
-                raise ValueError(f"⚠️ Multiple models found in /models: {model_subdirs}. Please keep only one.")
-        
-            MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
-            print(f"✅ Using model from: {MODEL_DIR}")
-        
-            # Load tokenizer and model
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
-                model = AutoModelForQuestionAnswering.from_pretrained(MODEL_DIR)
-                qa_pipeline = pipeline("question-answering", model=model, tokenizer=tokenizer)
-                print(f"✅ Model loaded successfully from {MODEL_DIR}")
-                return qa_pipeline
-            except Exception as e:
-                raise RuntimeError(f"❌ Model Load Error: {e}")
-        
-        # Load the model
-        qa_pipeline = load_model()
-        
-        @app.route('/api/health', methods=['GET'])
-        def health_check():
-            return jsonify({"status": "healthy"}), 200
-        
-        @app.route('/api/predict', methods=['POST'])
-        def predict():
-            try:
-                data = request.get_json()
-                
-                # Check if required fields are present
-                if not data or 'question' not in data or 'context' not in data:
-                    return jsonify({"error": "Missing required fields: 'question' and 'context'"}), 400
-                
-                # Extract question and context
-                question = data['question']
-                context = data['context']
-                
-                # Generate answer
-                response = qa_pipeline(question=question, context=context)
-                
-                return jsonify({
-                    "answer": response["answer"],
-                    "score": float(response["score"]),
-                    "start": response["start"],
-                    "end": response["end"]
-                }), 200
-                
-            except Exception as e:
-                return jsonify({"error": str(e)}), 500
-        
-        @app.route('/api/info', methods=['GET'])
-        def model_info():
-            # Read metadata if it exists
-            model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
-            if not model_subdirs:
-                return jsonify({"error": "No model loaded"}), 404
-            
-            MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
-            metadata_path = os.path.join(MODEL_DIR, "metadata.json")
-            
-            if os.path.exists(metadata_path):
-                import json
-                with open(metadata_path, 'r') as f:
-                    metadata = json.load(f)
-                return jsonify(metadata), 200
-            else:
-                return jsonify({"model_dir": MODEL_DIR}), 200
-        
-        if __name__ == '__main__':
-            app.run(host='0.0.0.0', port=5000)
-        EOF
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/info', methods=['GET'])
+def model_info():
+    # Read metadata if it exists
+    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
+    if not model_subdirs:
+        return jsonify({"error": "No model loaded"}), 404
+    
+    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
+    metadata_path = os.path.join(MODEL_DIR, "metadata.json")
+    
+    if os.path.exists(metadata_path):
+        import json
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        return jsonify(metadata), 200
+    else:
+        return jsonify({"model_dir": MODEL_DIR}), 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+EOF
                         
                             # Update requirements.txt to include Flask
                             if [ -f requirements.txt ]; then
@@ -288,7 +286,7 @@ pipeline {
                             fi
                         """
                         
-                        echo "✅ Flask API успешно подготовлена"
+                        echo "? Flask API успешно подготовлена"
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при подготовке Flask API: ${e.message}")
@@ -303,7 +301,7 @@ pipeline {
                     steps {
                         script {
                             try {
-                                echo "🔨 Начинаем сборку Docker образа: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                                echo "?? Начинаем сборку Docker образа: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                                 
                                 // Создаем аргументы сборки для лучшей читабельности
                                 sh """
@@ -341,7 +339,7 @@ pipeline {
                                         -f Dockerfile .  
                                 """
                                 
-                                echo "✅ Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                                echo "? Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
                             } catch (Exception e) {
                                 currentBuild.result = 'FAILURE'
                                 error("Ошибка при сборке Docker образа: ${e.message}")
@@ -354,7 +352,7 @@ pipeline {
                     steps {
                         script {
                             try {
-                                echo "🔍 Подготовка Trivy для сканирования"
+                                echo "?? Подготовка Trivy для сканирования"
                                 
                                 sh """
                                     mkdir -p ${TRIVY_CACHE_DIR}
@@ -364,7 +362,7 @@ pipeline {
                                     trivy image --cache-dir=${TRIVY_CACHE_DIR} --download-db-only
                                 """
                                 
-                                echo "✅ Подготовка Trivy завершена успешно"
+                                echo "? Подготовка Trivy завершена успешно"
                             } catch (Exception e) {
                                 currentBuild.result = 'FAILURE'
                                 error("Ошибка при подготовке Trivy: ${e.message}")
@@ -381,7 +379,7 @@ pipeline {
                     steps {
                         script {
                             try {
-                                echo "🔍 Начинаем сканирование образа на уязвимости"
+                                echo "?? Начинаем сканирование образа на уязвимости"
                                 
                                 // Сканируем на уязвимости (включая MEDIUM)
                                 sh """
@@ -402,7 +400,7 @@ pipeline {
                                         ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/sbom.xml || true
                                 """
                                 
-                                echo "=== 📋 Результаты сканирования Trivy ==="
+                                echo "=== ?? Результаты сканирования Trivy ==="
                                 sh "cat trivy-reports/scan-results.txt"
                                 
                                 archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
@@ -412,7 +410,7 @@ pipeline {
                                     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
                                     -F chat_id=${TELEGRAM_CHAT_ID} \
                                     -F document=@trivy-reports/scan-results.txt \
-                                    -F caption="📊 *Trivy Scan Report* для ${env.IMAGE_NAME}:${IMAGE_TAG} (Build #${BUILD_NUMBER})" \
+                                    -F caption="?? *Trivy Scan Report* для ${env.IMAGE_NAME}:${IMAGE_TAG} (Build #${BUILD_NUMBER})" \
                                     -F parse_mode=Markdown
                                 """
                                 
@@ -421,109 +419,111 @@ pipeline {
                                 def highCount = sh(script: "grep -c 'HIGH' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
                                 def mediumCount = sh(script: "grep -c 'MEDIUM' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
                                 
-                                echo "📊 Найдено уязвимостей: CRITICAL: ${criticalCount}, HIGH: ${highCount}, MEDIUM: ${mediumCount}"
+                                echo "?? Найдено уязвимостей: CRITICAL: ${criticalCount}, HIGH: ${highCount}, MEDIUM: ${mediumCount}"
                                 
                                 if (criticalCount.toInteger() > 0) {
-                                    def userChoice = input message: '🚨 Найдены критические уязвимости. Хотите продолжить?', 
+                                    def userChoice = input message: '?? Найдены критические уязвимости. Хотите продолжить?', 
                                                       ok: 'Продолжить', 
                                                       parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
                                     if (userChoice == 'Нет') {
                                         error("Сборка остановлена из-за критических уязвимостей.")
                                     } else {
-                                        echo "⚠️ Продолжаем несмотря на уязвимости."
+                                        echo "?? Продолжаем несмотря на уязвимости."
                                     }
                                 } else {
-                                    echo "✅ Критических уязвимостей не обнаружено."
+                                    echo "? Критических уязвимостей не обнаружено."
                                 }
                             } catch (Exception e) {
-                                echo "⚠️ Ошибка в процессе сканирования: ${e.message}"
+                                echo "?? Ошибка в процессе сканирования: ${e.message}"
                                 // Продолжаем
                             }
                         }
                     }
                 }
                 
-        stage('Smoke тесты') {
-            when {
-                expression { return env.RUN_TESTS == 'true' }
-            }
-            steps {
-                script {
-                    try {
-                        echo "🧪 Запускаем базовые тесты Docker образа с Flask API"
-                        
-                        sh """
-                            # Запускаем контейнер для тестирования
-                            docker run -d -p 5000:5000 --name test-${env.IMAGE_NAME} ${env.IMAGE_NAME}:${IMAGE_TAG}
-                            
-                            # Проверяем, что контейнер запустился успешно
-                            if [ \$(docker inspect -f '{{.State.Running}}' test-${env.IMAGE_NAME}) = "true"; then
-                                echo "✅ Контейнер успешно запущен"
-                            else
-                                echo "❌ Контейнер не запустился"
-                                exit 1
-                            fi
-                            
-                            # Даем время на инициализацию Flask API
-                            sleep 10
-                            
-                            # Проверяем endpoint здоровья API
-                            if curl -s http://localhost:5000/api/health | grep -q "healthy"; then
-                                echo "✅ API Endpoint проверки здоровья работает корректно"
-                            else
-                                echo "❌ API не отвечает корректно"
-                                exit 1
-                            fi
-                            
-                            # Получаем логи контейнера
-                            docker logs test-${env.IMAGE_NAME} > container-logs.txt
-                            
-                            # Проверяем логи на наличие ошибок
-                            if grep -i "error\\|exception\\|failure" container-logs.txt; then
-                                echo "⚠️ В логах обнаружены ошибки!"
-                            else
-                                echo "✅ Логи не содержат ошибок"
-                            fi
-                            
-                            # Останавливаем тестовый контейнер
-                            docker stop test-${env.IMAGE_NAME} || true
-                            docker rm test-${env.IMAGE_NAME} || true
-                        """
-                        
-                        archiveArtifacts artifacts: 'container-logs.txt', fingerprint: true
-                        echo "✅ Smoke тесты пройдены успешно"
-                    } catch (Exception e) {
-                        echo "⚠️ Ошибка при выполнении тестов: ${e.message}"
-                        sh "docker stop test-${env.IMAGE_NAME} || true"
-                        sh "docker rm test-${env.IMAGE_NAME} || true"
-                        
-                        // Спрашиваем продолжать ли?
-                        def userChoice = input message: '🧪 Тесты не прошли. Хотите продолжить сборку?', 
-                                          ok: 'Продолжить', 
-                                          parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
-                        if (userChoice == 'Нет') {
-                            error("Сборка остановлена из-за неудачных тестов.")
-                        } else {
-                            echo "⚠️ Продолжаем несмотря на неудачные тесты."
+                stage('Smoke тесты') {
+                    when {
+                        expression { return env.RUN_TESTS == 'true' }
+                    }
+                    steps {
+                        script {
+                            try {
+                                echo "?? Запускаем базовые тесты Docker образа с Flask API"
+                                
+                                sh """
+                                    # Запускаем контейнер для тестирования
+                                    docker run -d -p 5000:5000 --name test-${env.IMAGE_NAME} ${env.IMAGE_NAME}:${IMAGE_TAG}
+                                    
+                                    # Проверяем, что контейнер запустился успешно
+                                    if [ \$(docker inspect -f '{{.State.Running}}' test-${env.IMAGE_NAME}) = "true" ]; then
+                                        echo "? Контейнер успешно запущен"
+                                    else
+                                        echo "? Контейнер не запустился"
+                                        exit 1
+                                    fi
+                                    
+                                    # Даем время на инициализацию Flask API
+                                    sleep 10
+                                    
+                                    # Проверяем endpoint здоровья API
+                                    if curl -s http://localhost:5000/api/health | grep -q "healthy"; then
+                                        echo "? API Endpoint проверки здоровья работает корректно"
+                                    else
+                                        echo "? API не отвечает корректно"
+                                        exit 1
+                                    fi
+                                    
+                                    # Получаем логи контейнера
+                                    docker logs test-${env.IMAGE_NAME} > container-logs.txt
+                                    
+                                    # Проверяем логи на наличие ошибок
+                                    if grep -i "error\\|exception\\|failure" container-logs.txt; then
+                                        echo "?? В логах обнаружены ошибки!"
+                                    else
+                                        echo "? Логи не содержат ошибок"
+                                    fi
+                                    
+                                    # Останавливаем тестовый контейнер
+                                    docker stop test-${env.IMAGE_NAME} || true
+                                    docker rm test-${env.IMAGE_NAME} || true
+                                """
+                                
+                                archiveArtifacts artifacts: 'container-logs.txt', fingerprint: true
+                                echo "? Smoke тесты пройдены успешно"
+                            } catch (Exception e) {
+                                echo "?? Ошибка при выполнении тестов: ${e.message}"
+                                sh "docker stop test-${env.IMAGE_NAME} || true"
+                                sh "docker rm test-${env.IMAGE_NAME} || true"
+                                
+                                // Спрашиваем продолжать ли?
+                                def userChoice = input message: '?? Тесты не прошли. Хотите продолжить сборку?', 
+                                                  ok: 'Продолжить', 
+                                                  parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
+                                if (userChoice == 'Нет') {
+                                    error("Сборка остановлена из-за неудачных тестов.")
+                                } else {
+                                    echo "?? Продолжаем несмотря на неудачные тесты."
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        stage('Публикация образа') {
+        stage('Публикация образа в Nexus') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
                     script {
                         try {
-                            echo "📤 Публикуем Docker образ в Nexus"
+                            echo "?? Публикуем Docker образ в Nexus"
                             
                             //Логинимся в Nexus
                             retry(3) {
                                 sh "echo \"$NEXUS_PASSWORD\" | docker login -u \"$NEXUS_USER\" --password-stdin http://${REGISTRY}"
                             }
                             
-                            // Ставим тэни на образ
+                            // Ставим тэги на образ
                             sh """
                                 docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                                 docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
@@ -537,7 +537,7 @@ pipeline {
                                 """
                             }
                             
-                            echo "✅ Успешно опубликовали образ: ${env.IMAGE_NAME} в Nexus"
+                            echo "? Успешно опубликовали образ: ${env.IMAGE_NAME} в Nexus"
                             
                             // Генерируем документацию образа
                             sh """
@@ -571,11 +571,11 @@ pipeline {
                             
                             // Метрики
                             def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}'", returnStdout: true).trim()
-                            echo "📊 Размер образа: ${imageSize}"
+                            echo "?? Размер образа: ${imageSize}"
                             
                             // Время сборки
                             def duration = currentBuild.durationString.replace(' and counting', '')
-                            echo "⏱️ Время сборки: ${duration}"
+                            echo "?? Время сборки: ${duration}"
                         } catch (Exception e) {
                             currentBuild.result = 'FAILURE'
                             error("Ошибка при публикации образа: ${e.message}")
@@ -588,7 +588,7 @@ pipeline {
         stage('Прибираемся') {
             steps {
                 script {
-                    echo "🧹 Очищаем рабочую область..."
+                    echo "?? Очищаем рабочую область..."
                     
                     // Прибираемся сохраняя кеш
                     sh """
@@ -605,7 +605,7 @@ pipeline {
                         rm -f trivy-results.txt container-logs.txt docker-build-args.txt || true
                     """
                     
-                    echo "✨ Прибрались! Ляпота-то какая, красота!"
+                    echo "? Прибрались! Ляпота-то какая, красота!"
                 }
             }
         }
@@ -619,7 +619,7 @@ pipeline {
                 sh """
                     # Готовим данные для уведомления
                     cat > success-notification.md << EOF
-                    ✅ *Pipeline Успешно Завершен!* 🎉
+                    ? *Pipeline Успешно Завершен!* ??
                     
                     *Информация о сборке:*
                     - Job: ${env.JOB_NAME}
@@ -632,7 +632,7 @@ pipeline {
                     *Доступ к образу:*
                     docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
                     
-                    *Статус: УСПЕХ* 🥳
+                    *Статус: УСПЕХ* ??
                     EOF
                     
                     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
@@ -643,7 +643,7 @@ pipeline {
                 
                 // Записываем метрики для анализа
                 def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}' || echo 'Unknown'", returnStdout: true).trim()
-                echo "📊 Метрики сборки:"
+                echo "?? Метрики сборки:"
                 echo "- Время сборки: ${buildDuration}"
                 echo "- Размер образа: ${imageSize}"
             }
@@ -652,47 +652,3 @@ pipeline {
         failure {
             script {
                 def failureStage = currentBuild.rawBuild.getCauses().get(0).getShortDescription()
-                
-                sh """
-                    # Готовим данные для уведомления о сбое
-                    cat > failure-notification.md << EOF
-                    ❌ *Pipeline Завершился с Ошибкой!* 🚨
-                    
-                    *Информация о сборке:*
-                    - Job: ${env.JOB_NAME}
-                    - Build: #${env.BUILD_NUMBER}
-                    - Модель: ${env.MODEL_NAME}
-                    - Этап сбоя: ${failureStage}
-                    
-                    *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали*
-                    
-                    [Просмотр логов](${env.BUILD_URL}console)
-                    EOF
-                    
-                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                    -d chat_id=${TELEGRAM_CHAT_ID} \
-                    -d text="\$(cat failure-notification.md)" \
-                    -d parse_mode=Markdown
-                """
-                
-                // Сохраняем логи неудачных билдов
-                archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
-            }
-        }
-
-        always {
-            script {
-                sh """
-                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                    -d chat_id=${TELEGRAM_CHAT_ID} \
-                    -d text="ℹ️ *Все гуд, выдохни! Процесс для ${env.IMAGE_NAME} завершен*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
-                    -d parse_mode=Markdown
-                """
-                
-                
-                cleanWs(deleteDirs: true)
-            }
-        }
-    }
-}
-
