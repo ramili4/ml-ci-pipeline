@@ -50,8 +50,9 @@ pipeline {
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при чтении конфигурации: ${e.message}")
-                    }
                 }
+            }
+            }
             }
         }
 
@@ -455,7 +456,7 @@ pipeline {
                             docker run -d -p 5000:5000 --name test-${env.IMAGE_NAME} ${env.IMAGE_NAME}:${IMAGE_TAG}
                             
                             # Проверяем, что контейнер запустился успешно
-                            if [ \$(docker inspect -f '{{.State.Running}}' test-${env.IMAGE_NAME}) = "true" ]; then
+                            if [ \$(docker inspect -f '{{.State.Running}}' test-${env.IMAGE_NAME}) = "true"; then
                                 echo "✅ Контейнер успешно запущен"
                             else
                                 echo "❌ Контейнер не запустился"
@@ -507,7 +508,7 @@ pipeline {
                     }
                 }
             }
-        }        
+        }
 
         stage('Публикация образа') {
             steps {
@@ -649,7 +650,7 @@ pipeline {
 
         failure {
             script {
-                def failureStage = currentBuild.rawBuild.getExecutor().getResult()
+                def failureStage = currentBuild.rawBuild.getCauses().get(0).getShortDescription()
                 
                 sh """
                     # Готовим данные для уведомления о сбое
@@ -688,8 +689,7 @@ pipeline {
                 """
                 
                 
-                cleanWs(patterns: [[pattern: 'model-config.yaml', type: 'INCLUDE']], 
-                        deleteDirs: true)
+                cleanWs(deleteDirs: true)
             }
         }
     }
