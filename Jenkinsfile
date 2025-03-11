@@ -284,13 +284,6 @@ pipeline {
                             echo "flask>=2.0.0" >> requirements.txt
                             echo "gunicorn>=20.1.0" >> requirements.txt
                         fi
-                        
-                        # Update Dockerfile to use the correct port and runtime
-                        if [ -f Dockerfile ]; then
-                            sed -i 's/GRADIO_SERVER_PORT=7860/API_PORT=5000/g' Dockerfile
-                            sed -i 's/EXPOSE \\${GRADIO_SERVER_PORT}/EXPOSE \\${API_PORT}/g' Dockerfile
-                            sed -i 's/gradio/flask gunicorn/g' Dockerfile
-                        fi
                     """
                     
                     echo "✅ Flask API успешно подготовлена"
