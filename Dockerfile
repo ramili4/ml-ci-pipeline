@@ -29,6 +29,15 @@ RUN pip install --no-cache-dir -r requirements.txt \
     # Install CPU-only version of PyTorch, TorchVision, and Torchaudio
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
+# Download model from MinIO
+RUN python -c "from minio import Minio; \
+                client = Minio('${MINIO_URL}'.replace('http://', ''), access_key='minioadmin', secret_key='minioadmin', secure=False); \
+                objects = client.list_objects('${BUCKET_NAME}', prefix='${MODEL_NAME}/', recursive=True); \
+                import os; \
+                os.makedirs('/models/${MODEL_NAME}', exist_ok=True); \
+                for obj in objects: \
+                    client.fget_object('${BUCKET_NAME}', obj.object_name, '/models/' + obj.object_name.split('/', 1)[1])"
+
 # Copy application files into the container
 COPY . .
 
