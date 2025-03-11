@@ -29,28 +29,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
     # Install CPU-only version of PyTorch, TorchVision, and Torchaudio
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Download model from MinIO securely
-RUN python -c "import os; \
-    from minio import Minio; \
-    minio_url = os.getenv('MINIO_URL', 'localhost:9000').replace('http://', ''); \
-    bucket = os.getenv('BUCKET_NAME', 'models'); \
-    model_name = os.getenv('MODEL_NAME', 'bert-tiny'); \
-    prefix = model_name + '/'; \
-    model_dir = f'/models/{model_name}'; \
-    os.makedirs(model_dir, exist_ok=True); \
-    print(f'Downloading model {model_name} from {bucket}'); \
-    client = Minio(minio_url, access_key=access_key, secret_key=secret_key, secure=False); \
-    objects_found = False; \
-    for obj in client.list_objects(bucket, prefix=prefix, recursive=True): \
-        objects_found = True; \
-        object_name = obj.object_name; \
-        relative_path = object_name[len(prefix):] if prefix in object_name else object_name; \
-        destination = f'{model_dir}/{relative_path}'; \
-        os.makedirs(os.path.dirname(destination), exist_ok=True) if '/' in relative_path else None; \
-        print(f'Downloading {object_name} to {destination}'); \
-        client.fget_object(bucket, object_name, destination); \
-    if not objects_found: \
-        raise Exception(f'No objects found for model {model_name} in bucket {bucket}')"
+# Copy the downloaded model into the container
+COPY /tmp-models /models
 
 # Copy application files into the container
 COPY . .
