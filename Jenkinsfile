@@ -137,8 +137,6 @@ pipeline {
                             echo "📂 Verifying copied model:"
                             ls -l /var/jenkins_home/tmp-models/
                         """
-        
-                        // Ensure the model is inside the workspace for Docker build
                         sh """
                             echo "🚛 Moving model to workspace for Docker..."
                             mkdir -p ${WORKSPACE}/tmp-models/
@@ -163,7 +161,6 @@ pipeline {
                     try {
                         echo "✅ Flask API файл уже в репозитории, ничего не нужно генерировать"
                         
-                        // Ensure requirements.txt has Flask
                         sh """
                             if ! grep -q "flask" requirements.txt; then
                                 echo "flask>=2.0.0" >> requirements.txt
