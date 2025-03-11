@@ -159,28 +159,28 @@ pipeline {
             }
         }
 
-        stages {
-            stage('Создание папки для модели и копирование из MinIO') {
-                steps {
-                    script {
-                        def modelPath = "/tmp-models/${env.MODEL_NAME}"
-                        sh "mkdir -p ${modelPath}"
-                        
-                        withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
-                            sh """
-                                /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
-                                
-                                if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
-                                    echo "Creating bucket ${BUCKET_NAME}..."
-                                    /usr/local/bin/mc mb myminio/${BUCKET_NAME}
-                                fi
-    
-                                /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
-                            """
-                        }
+       stage('Создание папки для модели и копирование из MinIO') {
+            steps {
+                script {
+                    def modelPath = "/tmp-models/${env.MODEL_NAME}"
+                    sh "mkdir -p ${modelPath}"
+                    
+                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
+                        sh """
+                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
+                            
+                            if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
+                                echo "Creating bucket ${BUCKET_NAME}..."
+                                /usr/local/bin/mc mb myminio/${BUCKET_NAME}
+                            fi
+        
+                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
+                        """
                     }
                 }
             }
+        }
+        
 
         stage('Подготовка Flask API') {
             steps {
