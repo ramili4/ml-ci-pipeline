@@ -159,7 +159,7 @@ pipeline {
             }
         }
 
-       stage('Создание папки для модели и копирование из MinIO') {
+      stage('Создание папки для модели и копирование из MinIO') {
             steps {
                 script {
                     def modelPath = "/var/jenkins_home/tmp-models/${env.MODEL_NAME}"
@@ -174,7 +174,8 @@ pipeline {
                                 /usr/local/bin/mc mb myminio/${BUCKET_NAME}
                             fi
         
-                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
+                            # Copy only the model files, NOT another subfolder
+                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME}/* ${modelPath}/
                         """
                     }
                 }
