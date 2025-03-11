@@ -331,6 +331,14 @@ EOF
             }
         }    
 
+        stage('Verify Model Exists in Build Context') {
+            steps {
+                script {
+                    sh "ls -l ${WORKSPACE}/tmp-models/"
+                }
+            }
+        }
+
         stage('Параллельные задачи') {
             parallel {
                 stage('Собираем докер образ') {
