@@ -162,7 +162,7 @@ pipeline {
        stage('Создание папки для модели и копирование из MinIO') {
             steps {
                 script {
-                    def modelPath = "/tmp-models/${env.MODEL_NAME}"
+                    def modelPath = "/var/jenkins_home/tmp-models/${env.MODEL_NAME}"
                     sh "mkdir -p ${modelPath}"
                     
                     withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
@@ -180,6 +180,7 @@ pipeline {
                 }
             }
         }
+
         
 
         stage('Подготовка Flask API') {
