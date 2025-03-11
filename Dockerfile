@@ -23,7 +23,7 @@ ENV API_PORT=${API_PORT}
 WORKDIR /app
 
 # Ensure model directory exists inside the container
-RUN mkdir -p /models
+RUN mkdir -p /models && chmod -R 777 /models
 
 # Copy requirements.txt and install dependencies
 COPY requirements.txt .
@@ -32,18 +32,19 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Copy the downloaded model from Jenkins agent's build context
-# Avoid build errors if "tmp-models" is empty or missing
-COPY tmp-models /models
+COPY tmp-models/${MODEL_NAME} /models/${MODEL_NAME}
 
 # Copy application files into the container
 COPY src/app.py /app/app.py
 
+# Set permissions for security
+RUN useradd -m appuser && chown -R appuser:appuser /app /models
+
 # Expose the port for the Flask API
 EXPOSE ${API_PORT}
 
-# Switch to a non-root user for security
-RUN useradd -m appuser
+# Switch to non-root user
 USER appuser
 
 # Run Gunicorn as the entry point
-CMD ["gunicorn", "--workers", "4", "--bind", "0.0.0.0:5000", "app:app"]
+ENTRYPOINT ["gunicorn", "--workers", "4", "--bind", "0.0.0.0:5000", "app:app"]
