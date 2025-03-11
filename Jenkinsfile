@@ -625,88 +625,88 @@ EOF
             }
         }
 
-    post {
-        success {
-            script {
-                def buildDuration = currentBuild.durationString.replace(' and counting', '')
-                
-                sh """
-                    # Готовим данные для уведомления
-                    cat > success-notification.md << EOF
-                    ? *Pipeline Успешно Завершен!* ??
+        post {
+            success {
+                script {
+                    def buildDuration = currentBuild.durationString.replace(' and counting', '')
                     
-                    *Информация о сборке:*
-                    - Job: ${env.JOB_NAME}
-                    - Build: #${env.BUILD_NUMBER}
-                    - Модель: ${env.MODEL_NAME}
-                    - Репозиторий: ${env.HF_REPO}
-                    - Тег образа: ${IMAGE_TAG}
-                    - Время сборки: ${buildDuration}
+                    sh """
+                        # Готовим данные для уведомления
+                        cat > success-notification.md << EOF
+                        ? *Pipeline Успешно Завершен!* ??
+                        
+                        *Информация о сборке:*
+                        - Job: ${env.JOB_NAME}
+                        - Build: #${env.BUILD_NUMBER}
+                        - Модель: ${env.MODEL_NAME}
+                        - Репозиторий: ${env.HF_REPO}
+                        - Тег образа: ${IMAGE_TAG}
+                        - Время сборки: ${buildDuration}
+                        
+                        *Доступ к образу:*
+                        docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                        
+                        *Статус: УСПЕХ* ??
+                        EOF
+                        
+                        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                        -d chat_id=${TELEGRAM_CHAT_ID} \
+                        -d text="\$(cat success-notification.md)" \
+                        -d parse_mode=Markdown
+                    """
                     
-                    *Доступ к образу:*
-                    docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
-                    
-                    *Статус: УСПЕХ* ??
-                    EOF
-                    
-                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                    -d chat_id=${TELEGRAM_CHAT_ID} \
-                    -d text="\$(cat success-notification.md)" \
-                    -d parse_mode=Markdown
-                """
-                
-                // Записываем метрики для анализа
-                def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}' || echo 'Unknown'", returnStdout: true).trim()
-                echo "?? Метрики сборки:"
-                echo "- Время сборки: ${buildDuration}"
-                echo "- Размер образа: ${imageSize}"
+                    // Записываем метрики для анализа
+                    def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}' || echo 'Unknown'", returnStdout: true).trim()
+                    echo "?? Метрики сборки:"
+                    echo "- Время сборки: ${buildDuration}"
+                    echo "- Размер образа: ${imageSize}"
+                }
             }
-        }
-
-        failure {
-            script {
-                def failureStage = currentBuild.rawBuild.getCauses().get(0).getShortDescription()
-                
-                sh """
-                    # Готовим данные для уведомления о сбое
-                    cat > failure-notification.md << EOF
-                    ❌ *Pipeline Завершился с Ошибкой!* 🚨
+    
+            failure {
+                script {
+                    def failureStage = currentBuild.rawBuild.getCauses().get(0).getShortDescription()
                     
-                    *Информация о сборке:*
-                    - Job: ${env.JOB_NAME}
-                    - Build: #${env.BUILD_NUMBER}
-                    - Модель: ${env.MODEL_NAME}
-                    - Этап сбоя: ${failureStage}
+                    sh """
+                        # Готовим данные для уведомления о сбое
+                        cat > failure-notification.md << EOF
+                        ❌ *Pipeline Завершился с Ошибкой!* 🚨
+                        
+                        *Информация о сборке:*
+                        - Job: ${env.JOB_NAME}
+                        - Build: #${env.BUILD_NUMBER}
+                        - Модель: ${env.MODEL_NAME}
+                        - Этап сбоя: ${failureStage}
+                        
+                        *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали*
+                        
+                        [Просмотр логов](${env.BUILD_URL}console)
+                        EOF
+                        
+                        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                        -d chat_id=${TELEGRAM_CHAT_ID} \
+                        -d text="\$(cat failure-notification.md)" \
+                        -d parse_mode=Markdown
+                    """
                     
-                    *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали*
-                    
-                    [Просмотр логов](${env.BUILD_URL}console)
-                    EOF
-                    
-                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                    -d chat_id=${TELEGRAM_CHAT_ID} \
-                    -d text="\$(cat failure-notification.md)" \
-                    -d parse_mode=Markdown
-                """
-                
-                // Сохраняем логи неудачных билдов
-                archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
+                    // Сохраняем логи неудачных билдов
+                    archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
+                }
             }
-        }
-
-        always {
-            script {
-                sh """
-                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                    -d chat_id=${TELEGRAM_CHAT_ID} \
-                    -d text="ℹ️ *Все гуд, выдохни! Процесс для ${env.IMAGE_NAME} завершен*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
-                    -d parse_mode=Markdown
-                """
-                
-                
-                cleanWs(deleteDirs: true)
+    
+            always {
+                script {
+                    sh """
+                        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                        -d chat_id=${TELEGRAM_CHAT_ID} \
+                        -d text="ℹ️ *Все гуд, выдохни! Процесс для ${env.IMAGE_NAME} завершен*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
+                        -d parse_mode=Markdown
+                    """
+                    
+                    
+                    cleanWs(deleteDirs: true)
+                }
             }
         }
     }
-}
-}
+    }
