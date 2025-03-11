@@ -8,7 +8,7 @@ ARG MODEL_NAME
 ARG MODEL_VERSION
 ARG BUILD_DATE
 ARG BUILD_ID
-ARG GRADIO_SERVER_PORT=7860
+ARG API_PORT=5000
 
 # Environment variables
 ENV MINIO_URL=${MINIO_URL}
@@ -17,7 +17,7 @@ ENV MODEL_NAME=${MODEL_NAME}
 ENV MODEL_VERSION=${MODEL_VERSION}
 ENV BUILD_DATE=${BUILD_DATE}
 ENV BUILD_ID=${BUILD_ID}
-ENV GRADIO_SERVER_PORT=${GRADIO_SERVER_PORT}
+ENV API_PORT=${API_PORT}
 
 # Set working directory inside the container
 WORKDIR /app
@@ -25,15 +25,15 @@ WORKDIR /app
 # Copy requirements.txt and install dependencies (without torch)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir gradio>=3.50.2 \
+    && pip install --no-cache-dir flask gunicorn \
     # Install CPU-only version of PyTorch, TorchVision, and Torchaudio
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Copy all application files into the container
+# Copy application files into the container
 COPY . .
 
-# Expose the port for Gradio server
-EXPOSE ${GRADIO_SERVER_PORT}
+# Expose the port for the Flask API
+EXPOSE ${API_PORT}
 
-# Run the application
+# Set the entrypoint to run the Flask application
 CMD ["python", "app.py"]
