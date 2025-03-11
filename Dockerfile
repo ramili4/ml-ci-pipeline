@@ -22,12 +22,12 @@ ENV GRADIO_SERVER_PORT=${GRADIO_SERVER_PORT}
 # Set working directory inside the container
 WORKDIR /app
 
-# Copy requirements.txt and install dependencies
+# Copy requirements.txt and install dependencies (without torch)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir gradio>=3.50.2 \
-    # Install CPU-only version of PyTorch
-    && pip install --no-cache-dir torch==2.1.0+cpu  # Ensure CPU version of PyTorch is installed
+    # Install CPU-only version of PyTorch, TorchVision, and Torchaudio
+    && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Copy all application files into the container
 COPY . .
