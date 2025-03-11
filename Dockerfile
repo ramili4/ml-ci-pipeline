@@ -28,8 +28,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir flask gunicorn \
     # Install CPU-only version of PyTorch, TorchVision, and Torchaudio
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-
-# Download model from MinIO
+    
+# Download model from MinIO securely
 RUN python -c "import os; from minio import Minio; \
     client = Minio(os.getenv('MINIO_URL', 'localhost:9000').replace('http://', ''), \
                    access_key=os.getenv('MINIO_ACCESS_KEY'), \
@@ -39,7 +39,8 @@ RUN python -c "import os; from minio import Minio; \
     prefix = os.getenv('MODEL_NAME', 'bert-tiny') + '/'; \
     os.makedirs(f'/models/{prefix}', exist_ok=True); \
     for obj in client.list_objects(bucket, prefix=prefix, recursive=True): \
-        client.fget_object(bucket, obj.object_name, f'/models/{obj.object_name.split("/", 1)[1]}')"
+        client.fget_object(bucket, obj.object_name, f'/models/{obj.object_name.split(\"/\", 1)[-1]}')"
+
 
 # Copy application files into the container
 COPY . .
