@@ -50,6 +50,7 @@ pipeline {
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при чтении конфигурации: ${e.message}")
+                    }
                 }
             }
             }
@@ -693,5 +694,6 @@ pipeline {
             }
         }
     }
+}
 }
 }
