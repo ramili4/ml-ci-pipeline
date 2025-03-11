@@ -26,7 +26,7 @@ ENV API_PORT=${API_PORT}
 WORKDIR /app
 
 # Ensure model directory exists inside the container
-RUN mkdir -p /var/jenkins_home/tmp-models && chmod 777 /var/jenkins_home/tmp-models
+RUN mkdir -p /models && chmod 777 /models
 
 # Copy requirements.txt and install dependencies (without torch)
 COPY requirements.txt .
@@ -35,8 +35,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
     # Install CPU-only version of PyTorch, TorchVision, and Torchaudio
     && pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Copy the downloaded model from Jenkins agent folder to the container
-COPY /var/jenkins_home/tmp-models /models
+# Copy the downloaded model from Jenkins agent's build context
+COPY tmp-models /models
 
 # Copy application files into the container
 COPY . .
