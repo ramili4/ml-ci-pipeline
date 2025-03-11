@@ -338,17 +338,16 @@ EOF
                                 // Сборка с оптимизаций под кеш
                                 sh """
                                     docker build \
-                                        docker build \
-                                            --build-arg BUILDKIT_INLINE_CACHE=1 \
-                                            --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
-                                            --build-arg MINIO_URL=${MINIO_URL} \
-                                            --build-arg BUCKET_NAME=${BUCKET_NAME} \
-                                            --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                                            --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
-                                            --build-arg BUILD_DATE=${BUILD_DATE} \
-                                            --build-arg BUILD_ID=${BUILD_ID} \
-                                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
-                                            -f Dockerfile .  
+                                        --build-arg BUILDKIT_INLINE_CACHE=1 \
+                                        --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
+                                        --build-arg MINIO_URL=${MINIO_URL} \
+                                        --build-arg BUCKET_NAME=${BUCKET_NAME} \
+                                        --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                                        --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
+                                        --build-arg BUILD_DATE=${BUILD_DATE} \
+                                        --build-arg BUILD_ID=${BUILD_ID} \
+                                        -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
+                                        -f Dockerfile .  
                                 """
                                 
                                 echo "? Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
