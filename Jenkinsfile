@@ -167,10 +167,6 @@ pipeline {
                         
                         // Backup existing app.py if present
                         sh """
-                            if [ -f app.py ]; then
-                                mv app.py app.py.gradio.bak
-                            fi
-                            
                             # Create Flask API app.py
                             cat > app.py << 'EOF'
 from flask import Flask, request, jsonify
