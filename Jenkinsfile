@@ -308,17 +308,9 @@ EOF
                                     MODEL_VERSION=${env.MODEL_VERSION}
                                     BUILD_DATE=${BUILD_DATE}
                                     BUILD_ID=${BUILD_ID}
-                                    GRADIO_SERVER_PORT=7860
                                     EOF
                                 """
-                                
-                                // Проверяем наличие градио в requirements.txt
-                                sh """
-                                    if [ -f requirements.txt ] && ! grep -q "gradio" requirements.txt; then
-                                        echo "gradio>=3.50.2" >> requirements.txt
-                                    fi
-                                """
-                                
+                               
                                 // Сборка с оптимизаций под кеш
                                 sh """
                                     docker build \
@@ -330,7 +322,6 @@ EOF
                                         --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
                                         --build-arg BUILD_DATE=${BUILD_DATE} \
                                         --build-arg BUILD_ID=${BUILD_ID} \
-                                        --build-arg GRADIO_SERVER_PORT=7860 \
                                         -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
                                         -f Dockerfile .  
                                 """
