@@ -323,8 +323,6 @@ EOF
                                             --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
                                             --build-arg BUILD_DATE=${BUILD_DATE} \
                                             --build-arg BUILD_ID=${BUILD_ID} \
-                                            --build-arg MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY} \
-                                            --build-arg MINIO_SECRET_KEY=${MINIO_SECRET_KEY} \
                                             -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
                                             -f Dockerfile .  
                                 """
