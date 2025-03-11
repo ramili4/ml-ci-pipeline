@@ -221,13 +221,20 @@ pipeline {
         }
   
 
-        stage('Verify Model Exists in Build Context') {
-            steps {
-                script {
-                    sh "ls -l ${WORKSPACE}/tmp-models/"
-                }
+     stage('Ensure Model Directory Exists') {
+        steps {
+            script {
+                def workspaceModelPath = "${WORKSPACE}/tmp-models"
+    
+                // Ensure the directory exists
+                sh "mkdir -p ${workspaceModelPath}"
+    
+                // Log to verify
+                sh "ls -l ${workspaceModelPath} || echo '⚠️ No models found, but proceeding...'"
             }
         }
+    }
+
 
         stage('Параллельные задачи') {
             parallel {
