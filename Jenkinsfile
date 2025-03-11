@@ -203,133 +203,23 @@ pipeline {
             steps {
                 script {
                     try {
-                        echo "?? Начинаем подготовку Flask API для модели"
+                        echo "✅ Flask API файл уже в репозитории, ничего не нужно генерировать"
                         
-                        // Backup existing app.py if present
+                        // Ensure requirements.txt has Flask
                         sh """
-                            # Create Flask API app.py
-                            cat > app.py << 'EOF'
-from flask import Flask, request, jsonify
-from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
-import os
-import shutil
-
-app = Flask(__name__)
-
-# Path where the model is stored
-MODEL_ROOT_DIR = "/models"
-
-# Ensure the models directory exists
-if not os.path.exists(MODEL_ROOT_DIR):
-    os.makedirs(MODEL_ROOT_DIR)
-
-# Find the model folder
-def load_model():
-    # Clean up any previous models before downloading a new one
-    for item in os.listdir(MODEL_ROOT_DIR):
-        item_path = os.path.join(MODEL_ROOT_DIR, item)
-        if os.path.isdir(item_path):
-            print(f"??? Removing old model: {item_path}")
-            shutil.rmtree(item_path)
-
-    # Find the newly downloaded model folder inside /models
-    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
-
-    if len(model_subdirs) == 0:
-        raise ValueError("? No model found in /models. Please download a model first.")
-    elif len(model_subdirs) > 1:
-        raise ValueError(f"?? Multiple models found in /models: {model_subdirs}. Please keep only one.")
-
-    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
-    print(f"? Using model from: {MODEL_DIR}")
-
-    # Load tokenizer and model
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
-        model = AutoModelForQuestionAnswering.from_pretrained(MODEL_DIR)
-        qa_pipeline = pipeline("question-answering", model=model, tokenizer=tokenizer)
-        print(f"? Model loaded successfully from {MODEL_DIR}")
-        return qa_pipeline
-    except Exception as e:
-        raise RuntimeError(f"? Model Load Error: {e}")
-
-# Load the model
-qa_pipeline = load_model()
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({"status": "healthy"}), 200
-
-@app.route('/api/predict', methods=['POST'])
-def predict():
-    try:
-        data = request.get_json()
-        
-        # Check if required fields are present
-        if not data or 'question' not in data or 'context' not in data:
-            return jsonify({"error": "Missing required fields: 'question' and 'context'"}), 400
-        
-        # Extract question and context
-        question = data['question']
-        context = data['context']
-        
-        # Generate answer
-        response = qa_pipeline(question=question, context=context)
-        
-        return jsonify({
-            "answer": response["answer"],
-            "score": float(response["score"]),
-            "start": response["start"],
-            "end": response["end"]
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/info', methods=['GET'])
-def model_info():
-    # Read metadata if it exists
-    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
-    if not model_subdirs:
-        return jsonify({"error": "No model loaded"}), 404
-    
-    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
-    metadata_path = os.path.join(MODEL_DIR, "metadata.json")
-    
-    if os.path.exists(metadata_path):
-        import json
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        return jsonify(metadata), 200
-    else:
-        return jsonify({"model_dir": MODEL_DIR}), 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-EOF
-                        
-                            # Update requirements.txt to include Flask
-                            if [ -f requirements.txt ]; then
-                                # Check if flask is already in requirements
-                                if ! grep -q "flask" requirements.txt; then
-                                    echo "flask>=2.0.0" >> requirements.txt
-                                    echo "gunicorn>=20.1.0" >> requirements.txt
-                                fi
-                            else
-                                echo "transformers>=4.10.0" > requirements.txt
+                            if ! grep -q "flask" requirements.txt; then
                                 echo "flask>=2.0.0" >> requirements.txt
                                 echo "gunicorn>=20.1.0" >> requirements.txt
                             fi
                         """
-                        
-                        echo "? Flask API успешно подготовлена"
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при подготовке Flask API: ${e.message}")
                     }
                 }
             }
-        }    
+        }
+  
 
         stage('Verify Model Exists in Build Context') {
             steps {
