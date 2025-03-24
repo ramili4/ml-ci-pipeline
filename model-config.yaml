@@ -1,6 +1,6 @@
-model_name: "bert-tiny"
+model_name: "whisper-tiny"
 version: "1.0.0"
-huggingface_repo: "prajjwal1"
+huggingface_repo: "openai"
 
 model_files:
   - pytorch_model.bin
