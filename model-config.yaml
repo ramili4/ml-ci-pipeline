@@ -5,7 +5,6 @@ huggingface_repo: "openai"
 model_files:
   - pytorch_model.bin
   - config.json
-  - vocab.txt
   - vocab.json
 
 requirements:
