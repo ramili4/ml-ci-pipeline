@@ -2,11 +2,6 @@ model_name: "TinyLlama-1.1B-Chat-v1.0"
 version: "1.0.0"
 huggingface_repo: "TinyLlama"
 
-model_files:
-  - pytorch_model.bin
-  - config.json
-  - vocab.txt
-
 requirements:
   - transformers==4.30.0
   - torch==2.0.0
