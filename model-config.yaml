@@ -1,6 +1,6 @@
-model_name: "TinyLlama-1.1B-Chat-v1.0-GGUF"
+model_name: "TinyLlama-1.1B-Chat-v1.0"
 version: "1.0.0"
-huggingface_repo: "TheBloke"
+huggingface_repo: "TinyLlama"
 
 model_files:
   - pytorch_model.bin
