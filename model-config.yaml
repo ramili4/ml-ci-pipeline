@@ -1,6 +1,11 @@
-model_name: ""
+model_name: "bert-small-kor-v1"
 version: "1.0.0"
-huggingface_repo: ""
+huggingface_repo: "bongsoo"
+
+model_files:
+  - pytorch_model.bin
+  - config.json
+  - vocab.txt
 
 requirements:
   - transformers==4.30.0
