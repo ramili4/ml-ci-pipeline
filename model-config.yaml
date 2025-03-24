@@ -6,7 +6,7 @@ model_files:
   - pytorch_model.bin
   - config.json
   - vocab.txt
-  - vocan.json
+  - vocab.json
 
 requirements:
   - transformers==4.30.0
