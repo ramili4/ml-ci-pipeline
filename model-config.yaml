@@ -1,6 +1,6 @@
-model_name: "TinyLlama-1.1B-Chat-v1.0"
+model_name: ""
 version: "1.0.0"
-huggingface_repo: "TinyLlama"
+huggingface_repo: ""
 
 requirements:
   - transformers==4.30.0
