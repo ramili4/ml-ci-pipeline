@@ -1,6 +1,6 @@
-model_name: "bert-small-kor-v1"
+model_name: "bert-tiny"
 version: "1.0.0"
-huggingface_repo: "bongsoo"
+huggingface_repo: "prajjwal1"
 
 model_files:
   - pytorch_model.bin
