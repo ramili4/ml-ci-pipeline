@@ -38,13 +38,8 @@ pipeline {
                         env.IMAGE_NAME = "ml-model-${env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")}"
                         env.HF_FILES = modelConfig.model_files ?: ["pytorch_model.bin", "config.json", "vocab.txt"]
                         env.RUN_TESTS = modelConfig.run_tests ?: "true"
-<<<<<<< HEAD
-                        
-                        // Записываем конфигурацию
-=======
 
                         // Debugging Output
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                         echo "=== Конфигурация модели ==="
                         echo "Модель: ${env.MODEL_NAME}"
                         echo "Репозиторий: ${env.HF_REPO}"
@@ -63,64 +58,6 @@ pipeline {
        stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
-<<<<<<< HEAD
-                    def cacheHit = false
-                    def modelFiles = env.HF_FILES.split(',')
-                    sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
-                    
-                    // Проверка модели в кэше
-                    def cacheStatus = sh(script: """
-                        for file in ${modelFiles.join(' ')}; do
-                            if [ ! -f "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file" ]; then
-                                echo "Модель в кэше не найдена"
-                                exit 0
-                            fi
-                        done
-                        echo "complete"
-                    """, returnStdout: true).trim()
-                    
-                    if (cacheStatus == "complete") {
-                        echo "? Модель найдена в кэше, копируем..."
-                        sh "mkdir -p models/${env.MODEL_NAME} && cp -r ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/* models/${env.MODEL_NAME}/"
-                        cacheHit = true
-                    } else {
-                        echo "? Модель не найдена в кэше, скачиваем из Hugging Face..."
-                        
-                        sh "mkdir -p models/${env.MODEL_NAME}"
-                        
-                        retry(env.MAX_RETRIES.toInteger()) {
-                            try {
-                                timeout(time: 30, unit: 'MINUTES') {
-                                    sh """
-                                        set -e
-                                        for file in ${modelFiles.join(' ')}; do
-                                            echo "Скачиваем \$file..."
-                                            curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
-                                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
-                                                -o models/${env.MODEL_NAME}/\$file
-                                                
-                                            # Копируем в кэш
-                                            cp models/${env.MODEL_NAME}/\$file ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/
-                                        done
-                                    """
-                                }
-                            } catch (Exception e) {
-                                echo "?? Ошибка при скачивании: ${e.message}. Повторная попытка..."
-                                throw e
-                            }
-                        }
-                    }
-                    
-                    // Validate downloaded files
-                    def fileCount = sh(script: "ls -A models/${env.MODEL_NAME} | wc -l", returnStdout: true).trim().toInteger()
-                    if (fileCount == 0) {
-                        error("Ошибка: Папка для модели пуста после загрузки! Выходим..")
-                    }
-                    
-                    echo "Успешно получили модель: ${env.MODEL_NAME} (из кэша: ${cacheHit})"
-                    
-                    // Генерируем метадату модели
-=======
                     sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
                     
                     retry(env.MAX_RETRIES.toInteger()) {
@@ -140,7 +77,6 @@ pipeline {
         stage('Копируем модель в рабочую область') {
             steps {
                 script {
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                     sh """
                         # Create directory structure
                         mkdir -p ${WORKSPACE}/models/${env.MODEL_NAME}
@@ -183,25 +119,6 @@ pipeline {
             }
         }
 
-<<<<<<< HEAD
-       stage('Создание папки для модели и копирование из MinIO') {
-            steps {
-                script {
-                    def modelPath = "/tmp-models/${env.MODEL_NAME}"
-                    sh "mkdir -p ${modelPath}"
-                    
-                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
-                        sh """
-                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
-                            
-                            if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
-                                echo "Creating bucket ${BUCKET_NAME}..."
-                                /usr/local/bin/mc mb myminio/${BUCKET_NAME}
-                            fi
-        
-                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
-                        """
-=======
       
         stage('Подготовка модели') {
             steps {
@@ -231,161 +148,31 @@ pipeline {
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("❌ Ошибка при подготовке модели: ${e.message}")
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                     }
                 }
             }
         }
-<<<<<<< HEAD
-        
-=======
 
 
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
 
         stage('Подготовка Flask API') {
             steps {
                 script {
                     try {
-<<<<<<< HEAD
-                        echo "?? Начинаем подготовку Flask API для модели"
-                        
-                        // Backup existing app.py if present
-                        sh """
-                            # Create Flask API app.py
-                            cat > app.py << 'EOF'
-from flask import Flask, request, jsonify
-from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
-import os
-import shutil
-
-app = Flask(__name__)
-
-# Path where the model is stored
-MODEL_ROOT_DIR = "/models"
-
-# Ensure the models directory exists
-if not os.path.exists(MODEL_ROOT_DIR):
-    os.makedirs(MODEL_ROOT_DIR)
-
-# Find the model folder
-def load_model():
-    # Clean up any previous models before downloading a new one
-    for item in os.listdir(MODEL_ROOT_DIR):
-        item_path = os.path.join(MODEL_ROOT_DIR, item)
-        if os.path.isdir(item_path):
-            print(f"??? Removing old model: {item_path}")
-            shutil.rmtree(item_path)
-
-    # Find the newly downloaded model folder inside /models
-    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
-
-    if len(model_subdirs) == 0:
-        raise ValueError("? No model found in /models. Please download a model first.")
-    elif len(model_subdirs) > 1:
-        raise ValueError(f"?? Multiple models found in /models: {model_subdirs}. Please keep only one.")
-
-    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
-    print(f"? Using model from: {MODEL_DIR}")
-
-    # Load tokenizer and model
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
-        model = AutoModelForQuestionAnswering.from_pretrained(MODEL_DIR)
-        qa_pipeline = pipeline("question-answering", model=model, tokenizer=tokenizer)
-        print(f"? Model loaded successfully from {MODEL_DIR}")
-        return qa_pipeline
-    except Exception as e:
-        raise RuntimeError(f"? Model Load Error: {e}")
-
-# Load the model
-qa_pipeline = load_model()
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({"status": "healthy"}), 200
-
-@app.route('/api/predict', methods=['POST'])
-def predict():
-    try:
-        data = request.get_json()
-        
-        # Check if required fields are present
-        if not data or 'question' not in data or 'context' not in data:
-            return jsonify({"error": "Missing required fields: 'question' and 'context'"}), 400
-        
-        # Extract question and context
-        question = data['question']
-        context = data['context']
-        
-        # Generate answer
-        response = qa_pipeline(question=question, context=context)
-        
-        return jsonify({
-            "answer": response["answer"],
-            "score": float(response["score"]),
-            "start": response["start"],
-            "end": response["end"]
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/info', methods=['GET'])
-def model_info():
-    # Read metadata if it exists
-    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
-    if not model_subdirs:
-        return jsonify({"error": "No model loaded"}), 404
-    
-    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
-    metadata_path = os.path.join(MODEL_DIR, "metadata.json")
-    
-    if os.path.exists(metadata_path):
-        import json
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        return jsonify(metadata), 200
-    else:
-        return jsonify({"model_dir": MODEL_DIR}), 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-EOF
-                        
-                            # Update requirements.txt to include Flask
-                            if [ -f requirements.txt ]; then
-                                # Check if flask is already in requirements
-                                if ! grep -q "flask" requirements.txt; then
-                                    echo "flask>=2.0.0" >> requirements.txt
-                                    echo "gunicorn>=20.1.0" >> requirements.txt
-                                fi
-                            else
-                                echo "transformers>=4.10.0" > requirements.txt
-=======
                         echo "✅ Flask API файл уже в репозитории, ничего не нужно генерировать"
                         
                         sh """
                             if ! grep -q "flask" requirements.txt; then
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                                 echo "flask>=2.0.0" >> requirements.txt
                                 echo "gunicorn>=20.1.0" >> requirements.txt
                             fi
                         """
-<<<<<<< HEAD
-                        
-                        echo "? Flask API успешно подготовлена"
-=======
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при подготовке Flask API: ${e.message}")
                     }
                 }
             }
-<<<<<<< HEAD
-        }    
-=======
         }
   
 
@@ -403,7 +190,6 @@ EOF
         }
     }
 
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
 
         stage('Параллельные задачи') {
             parallel {
@@ -428,19 +214,6 @@ EOF
                                 // Сборка с оптимизаций под кеш
                                 sh """
                                     docker build \
-<<<<<<< HEAD
-                                        docker build \
-                                            --build-arg BUILDKIT_INLINE_CACHE=1 \
-                                            --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
-                                            --build-arg MINIO_URL=${MINIO_URL} \
-                                            --build-arg BUCKET_NAME=${BUCKET_NAME} \
-                                            --build-arg MODEL_NAME=${env.MODEL_NAME} \
-                                            --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
-                                            --build-arg BUILD_DATE=${BUILD_DATE} \
-                                            --build-arg BUILD_ID=${BUILD_ID} \
-                                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
-                                            -f Dockerfile .  
-=======
                                         --build-arg BUILDKIT_INLINE_CACHE=1 \
                                         --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
                                         --build-arg MINIO_URL=${MINIO_URL} \
@@ -451,7 +224,6 @@ EOF
                                         --build-arg BUILD_ID=${BUILD_ID} \
                                         -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
                                         -f Dockerfile .  
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                                 """
                                 
                                 echo "? Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
@@ -725,99 +497,10 @@ EOF
                     """
         
                     echo "? Прибрались! Ляпота-то какая, красота!"
-<<<<<<< HEAD
-                }
-            }
-            post {
-                success {
-                    script {
-                        def buildDuration = currentBuild.durationString.replace(' and counting', '')
-
-                        sh """
-                            # Готовим данные для уведомления
-                            cat > success-notification.md << EOF
-                            ? *Pipeline Успешно Завершен!* ??
-
-                            *Информация о сборке:*
-                            - Job: ${env.JOB_NAME}
-                            - Build: #${env.BUILD_NUMBER}
-                            - Модель: ${env.MODEL_NAME}
-                            - Репозиторий: ${env.HF_REPO}
-                            - Тег образа: ${IMAGE_TAG}
-                            - Время сборки: ${buildDuration}
-
-                            *Доступ к образу:*
-                            docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
-
-                            *Статус: УСПЕХ* ??
-                            EOF
-
-                            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                            -d chat_id=${TELEGRAM_CHAT_ID} \
-                            -d text="\$(cat success-notification.md)" \
-                            -d parse_mode=Markdown
-                        """
-
-                        // Записываем метрики для анализа
-                        def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}' || echo 'Unknown'", returnStdout: true).trim()
-                        echo "?? Метрики сборки:"
-                        echo "- Время сборки: ${buildDuration}"
-                        echo "- Размер образа: ${imageSize}"
-                    }
-                }
-
-                failure {
-                    script {
-                        def failureStage = currentBuild.rawBuild.getCauses().isEmpty() ? "Unknown" : currentBuild.rawBuild.getCauses().get(0).getShortDescription()
-
-                        sh """
-                            # Готовим данные для уведомления о сбое
-                            cat > failure-notification.md << EOF
-                            ❌ *Pipeline Завершился с Ошибкой!* 🚨
-
-                            *Информация о сборке:*
-                            - Job: ${env.JOB_NAME}
-                            - Build: #${env.BUILD_NUMBER}
-                            - Модель: ${env.MODEL_NAME}
-                            - Этап сбоя: ${failureStage}
-
-                            *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали*
-
-                            [Просмотр логов](${env.BUILD_URL}console)
-                            EOF
-
-                            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                            -d chat_id=${TELEGRAM_CHAT_ID} \
-                            -d text="\$(cat failure-notification.md)" \
-                            -d parse_mode=Markdown
-                        """
-
-                        // Сохраняем логи неудачных билдов
-                        archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
-                    }
-                }
-
-                always {
-                    script {
-                        sh """
-                            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                            -d chat_id=${TELEGRAM_CHAT_ID} \
-                            -d text="ℹ️ *Все гуд, выдохни! Процесс для ${env.IMAGE_NAME} завершен*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
-                            -d parse_mode=Markdown
-                        """
-
-
-                        cleanWs(deleteDirs: true)
-                    }
-=======
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                 }
             }
         }
     }
-<<<<<<< HEAD
-}
-=======
 
     post {
         success {
@@ -906,4 +589,3 @@ EOF
 
 
    
->>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
