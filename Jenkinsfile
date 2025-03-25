@@ -36,17 +36,22 @@ pipeline {
                         env.MODEL_VERSION = modelConfig.version ?: "latest"
                         env.IMAGE_TAG = "${BUILD_DATE}-${env.MODEL_VERSION}"
                         env.IMAGE_NAME = "ml-model-${env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")}"
-                        env.HF_FILES = modelConfig.files ?: "pytorch_model.bin,config.json,vocab.txt"
+                        env.HF_FILES = modelConfig.model_files ?: ["pytorch_model.bin", "config.json", "vocab.txt"]
                         env.RUN_TESTS = modelConfig.run_tests ?: "true"
+<<<<<<< HEAD
                         
                         // Записываем конфигурацию
+=======
+
+                        // Debugging Output
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                         echo "=== Конфигурация модели ==="
                         echo "Модель: ${env.MODEL_NAME}"
                         echo "Репозиторий: ${env.HF_REPO}"
                         echo "Версия: ${env.MODEL_VERSION}"
                         echo "Тег образа: ${env.IMAGE_TAG}"
                         echo "Имя образа: ${env.IMAGE_NAME}"
-                        echo "Файлы для загрузки: ${env.HF_FILES}"
+                        echo "Файлы для загрузки: ${env.HF_FILES.join(', ')}"
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при чтении конфигурации: ${e.message}")
@@ -55,9 +60,10 @@ pipeline {
             }
         }
 
-        stage('Скачиваем модель из Hugging Face') {
+       stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
+<<<<<<< HEAD
                     def cacheHit = false
                     def modelFiles = env.HF_FILES.split(',')
                     sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
@@ -114,18 +120,36 @@ pipeline {
                     echo "Успешно получили модель: ${env.MODEL_NAME} (из кэша: ${cacheHit})"
                     
                     // Генерируем метадату модели
+=======
+                    sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
+                    
+                    retry(env.MAX_RETRIES.toInteger()) {
+                        sh """
+                            for file in ${env.HF_FILES.replaceAll('[\\[\\]]', '').split(',').join(' ')}; do
+                                echo "Скачиваем \$file..."
+                                curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                                    -L "https://huggingface.co/${env.HF_REPO}/${env.MODEL_NAME}/resolve/main/\$file" \
+                                    -o "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file"
+                            done
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Копируем модель в рабочую область') {
+            steps {
+                script {
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                     sh """
-                        cat > models/${env.MODEL_NAME}/metadata.json << EOF
-                        {
-                            "model_name": "${env.MODEL_NAME}",
-                            "huggingface_repo": "${env.HF_REPO}",
-                            "version": "${env.MODEL_VERSION}",
-                            "build_date": "${BUILD_DATE}",
-                            "build_id": "${BUILD_ID}",
-                            "jenkins_job": "${env.JOB_NAME}",
-                            "jenkins_build": "${env.BUILD_NUMBER}"
-                        }
-                        EOF
+                        # Create directory structure
+                        mkdir -p ${WORKSPACE}/models/${env.MODEL_NAME}
+                        
+                        # Copy files from cache to workspace
+                        cp -r ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/* ${WORKSPACE}/models/${env.MODEL_NAME}/
+                        
+                        # Verify files were copied
+                        ls -la ${WORKSPACE}/models/${env.MODEL_NAME}/
                     """
                 }
             }
@@ -159,6 +183,7 @@ pipeline {
             }
         }
 
+<<<<<<< HEAD
        stage('Создание папки для модели и копирование из MinIO') {
             steps {
                 script {
@@ -176,16 +201,53 @@ pipeline {
         
                             /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
                         """
+=======
+      
+        stage('Подготовка модели') {
+            steps {
+                script {
+                    try {
+                        echo "🚀 Подготавливаем модель для контейнера..."
+        
+                        sh """
+                            echo "🛠️ Cleaning up old models..."
+                            rm -rf /var/jenkins_home/tmp-models/*
+        
+                            echo "📥 Copying model: ${env.MODEL_NAME}"
+                            mkdir -p /var/jenkins_home/tmp-models/${env.MODEL_NAME}
+                            cp -r /var/jenkins_home/model_cache/${env.MODEL_NAME}/${env.MODEL_VERSION}/* /var/jenkins_home/tmp-models/${env.MODEL_NAME}/
+        
+                            echo "📂 Verifying copied model:"
+                            ls -l /var/jenkins_home/tmp-models/
+                        """
+                        sh """
+                            echo "🚛 Moving model to workspace for Docker..."
+                            mkdir -p ${WORKSPACE}/tmp-models/
+                            cp -r /var/jenkins_home/tmp-models/${env.MODEL_NAME} ${WORKSPACE}/tmp-models/
+                            ls -l ${WORKSPACE}/tmp-models/
+                        """
+        
+                        echo "✅ Модель успешно подготовлена!"
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        error("❌ Ошибка при подготовке модели: ${e.message}")
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                     }
                 }
             }
         }
+<<<<<<< HEAD
         
+=======
+
+
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
 
         stage('Подготовка Flask API') {
             steps {
                 script {
                     try {
+<<<<<<< HEAD
                         echo "?? Начинаем подготовку Flask API для модели"
                         
                         // Backup existing app.py if present
@@ -300,19 +362,48 @@ EOF
                                 fi
                             else
                                 echo "transformers>=4.10.0" > requirements.txt
+=======
+                        echo "✅ Flask API файл уже в репозитории, ничего не нужно генерировать"
+                        
+                        sh """
+                            if ! grep -q "flask" requirements.txt; then
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                                 echo "flask>=2.0.0" >> requirements.txt
                                 echo "gunicorn>=20.1.0" >> requirements.txt
                             fi
                         """
+<<<<<<< HEAD
                         
                         echo "? Flask API успешно подготовлена"
+=======
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error("Ошибка при подготовке Flask API: ${e.message}")
                     }
                 }
             }
+<<<<<<< HEAD
         }    
+=======
+        }
+  
+
+     stage('Ensure Model Directory Exists') {
+        steps {
+            script {
+                def workspaceModelPath = "${WORKSPACE}/tmp-models"
+    
+                // Ensure the directory exists
+                sh "mkdir -p ${workspaceModelPath}"
+    
+                // Log to verify
+                sh "ls -l ${workspaceModelPath} || echo '⚠️ No models found, but proceeding...'"
+            }
+        }
+    }
+
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
 
         stage('Параллельные задачи') {
             parallel {
@@ -337,6 +428,7 @@ EOF
                                 // Сборка с оптимизаций под кеш
                                 sh """
                                     docker build \
+<<<<<<< HEAD
                                         docker build \
                                             --build-arg BUILDKIT_INLINE_CACHE=1 \
                                             --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
@@ -348,6 +440,18 @@ EOF
                                             --build-arg BUILD_ID=${BUILD_ID} \
                                             -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
                                             -f Dockerfile .  
+=======
+                                        --build-arg BUILDKIT_INLINE_CACHE=1 \
+                                        --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
+                                        --build-arg MINIO_URL=${MINIO_URL} \
+                                        --build-arg BUCKET_NAME=${BUCKET_NAME} \
+                                        --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                                        --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
+                                        --build-arg BUILD_DATE=${BUILD_DATE} \
+                                        --build-arg BUILD_ID=${BUILD_ID} \
+                                        -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
+                                        -f Dockerfile .  
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                                 """
                                 
                                 echo "? Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
@@ -621,6 +725,7 @@ EOF
                     """
         
                     echo "? Прибрались! Ляпота-то какая, красота!"
+<<<<<<< HEAD
                 }
             }
             post {
@@ -704,8 +809,101 @@ EOF
 
                         cleanWs(deleteDirs: true)
                     }
+=======
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
                 }
             }
         }
     }
+<<<<<<< HEAD
 }
+=======
+
+    post {
+        success {
+            script {
+                def buildDuration = currentBuild.durationString.replace(' and counting', '')
+                
+                sh """
+                    # Готовим данные для уведомления
+                    cat > success-notification.md << EOF
+                    ? *Pipeline Успешно Завершен!* ??
+                    
+                    *Информация о сборке:*
+                    - Job: ${env.JOB_NAME}
+                    - Build: #${env.BUILD_NUMBER}
+                    - Модель: ${env.MODEL_NAME}
+                    - Репозиторий: ${env.HF_REPO}
+                    - Тег образа: ${IMAGE_TAG}
+                    - Время сборки: ${buildDuration}
+                    
+                    *Доступ к образу:*
+                    docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                    
+                    *Статус: УСПЕХ* ??
+                    EOF
+                    
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                    -d chat_id=${TELEGRAM_CHAT_ID} \
+                    -d text="\$(cat success-notification.md)" \
+                    -d parse_mode=Markdown
+                """
+                
+                // Записываем метрики для анализа
+                def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}' || echo 'Unknown'", returnStdout: true).trim()
+                echo "?? Метрики сборки:"
+                echo "- Время сборки: ${buildDuration}"
+                echo "- Размер образа: ${imageSize}"
+            }
+        }
+    
+        failure {
+            script {
+                def failureStage = currentBuild.rawBuild.getCauses().get(0).getShortDescription()
+                
+                sh """
+                    # Готовим данные для уведомления о сбое
+                    cat > failure-notification.md << EOF
+                    ❌ *Pipeline Завершился с Ошибкой!* 🚨
+                    
+                    *Информация о сборке:*
+                    - Job: ${env.JOB_NAME}
+                    - Build: #${env.BUILD_NUMBER}
+                    - Модель: ${env.MODEL_NAME}
+                    - Этап сбоя: ${failureStage}
+                    
+                    *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали*
+                    
+                    [Просмотр логов](${env.BUILD_URL}console)
+                    EOF
+                    
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                    -d chat_id=${TELEGRAM_CHAT_ID} \
+                    -d text="\$(cat failure-notification.md)" \
+                    -d parse_mode=Markdown
+                """
+                
+                // Сохраняем логи неудачных билдов
+                archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
+            }
+        }
+    
+        always {
+            script {
+                sh """
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                    -d chat_id=${TELEGRAM_CHAT_ID} \
+                    -d text="ℹ️ *Все гуд, выдохни! Процесс для ${env.IMAGE_NAME} завершен*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
+                    -d parse_mode=Markdown
+                """
+                
+                
+                cleanWs(deleteDirs: true)
+            }
+        }
+    }
+ }
+
+
+   
+>>>>>>> 85c4745ff4b56f32c922720b94a5a3d7c55e946c
