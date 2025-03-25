@@ -1,690 +1,711 @@
 pipeline {
     agent any
-    
-    parameters {
-        string(name: 'IMAGE_NAME', description: 'Docker image name to deploy')
-        string(name: 'IMAGE_TAG', description: 'Docker image tag to deploy')
-        choice(name: 'DEPLOYMENT_ENV', choices: ['dev', 'staging', 'production'], description: 'Environment to deploy to')
-        choice(name: 'DEPLOYMENT_TARGET', choices: ['kubernetes', 'standalone-server'], description: 'Where to deploy the model')
-        string(name: 'REPLICAS', defaultValue: '1', description: 'Number of replicas to deploy')
-        booleanParam(name: 'ENABLE_MONITORING', defaultValue: true, description: 'Enable Prometheus metrics')
-        booleanParam(name: 'ENABLE_AUTOSCALING', defaultValue: false, description: 'Enable HPA for Kubernetes deployments')
-        string(name: 'RESOURCE_CPU_LIMIT', defaultValue: '1000m', description: 'CPU limit for the container')
-        string(name: 'RESOURCE_MEMORY_LIMIT', defaultValue: '2Gi', description: 'Memory limit for the container')
-        text(name: 'CUSTOM_ENVIRONMENT_VARS', defaultValue: 'MODEL_CACHE_ENABLED=true\nLOG_LEVEL=info', description: 'Custom environment variables (key=value format)')
+
+    options {
+        timeout(time: 2, unit: 'HOURS')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
-    
+
     environment {
-        REGISTRY = "${params.DEPLOYMENT_ENV == 'production' ? 'production-registry:8082' : 'localhost:8082'}"
+        MINIO_URL = "http://localhost:9000"
+        BUCKET_NAME = "models"
+        NEXUS_HOST = "localhost"
+        NEXUS_DOCKER_PORT = "8082"
         DOCKER_REPO_NAME = "docker-hosted"
-        HELM_REPO_URL = "http://nexus:8081/repository/helm-hosted/"
-        KUBECONFIG_ID = "${params.DEPLOYMENT_ENV}-kubeconfig"
-        NAMESPACE = "ml-models-${params.DEPLOYMENT_ENV}"
-        DEPLOYMENT_NAME = "${params.IMAGE_NAME}-${params.DEPLOYMENT_ENV}"
+        REGISTRY = "${NEXUS_HOST}:${NEXUS_DOCKER_PORT}"
+        HUGGINGFACE_API_TOKEN = credentials('huggingface-token')
         TELEGRAM_TOKEN = credentials('Telegram_Bot_Token')
         TELEGRAM_CHAT_ID = credentials('Chat_id')
-        MODEL_API_PORT = "8000"
+        DOCKER_HOST = "unix:///var/run/docker.sock"
+        BUILD_DATE = sh(script: 'date +%Y%m%d', returnStdout: true).trim()
+        BUILD_ID = "${BUILD_DATE}-${BUILD_NUMBER}"
+        TRIVY_CACHE_DIR = "/tmp/trivy-cache"
+        MAX_RETRIES = 3
+        MODEL_CACHE_DIR = "/var/jenkins_home/model_cache"
     }
-    
+
     stages {
-        stage('Validate Parameters') {
+        stage('Читаем конфигурацию модели') {
             steps {
                 script {
-                    echo "=== Deployment Configuration ==="
-                    echo "Image: ${params.IMAGE_NAME}:${params.IMAGE_TAG}"
-                    echo "Environment: ${params.DEPLOYMENT_ENV}"
-                    echo "Target: ${params.DEPLOYMENT_TARGET}"
-                    echo "Replicas: ${params.REPLICAS}"
-                    
-                    // Validate image exists in registry
-                    withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
-                        def imageExists = sh(
-                            script: """
-                                curl -s -u ${NEXUS_USER}:${NEXUS_PASSWORD} \
-                                -X GET "${REGISTRY}/v2/${DOCKER_REPO_NAME}/${params.IMAGE_NAME}/manifests/${params.IMAGE_TAG}" \
-                                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-                                -w "%{http_code}" -o /dev/null
-                            """,
-                            returnStdout: true
-                        ).trim()
+                    try {
+                        def modelConfig = readYaml file: 'model-config.yaml'
+                        env.MODEL_NAME = modelConfig.model_name ?: "bert-tiny"
+                        env.HF_REPO = modelConfig.huggingface_repo ?: "prajjwal1/bert-tiny"
+                        env.MODEL_VERSION = modelConfig.version ?: "latest"
+                        env.IMAGE_TAG = "${BUILD_DATE}-${env.MODEL_VERSION}"
+                        env.IMAGE_NAME = "ml-model-${env.MODEL_NAME.toLowerCase().replaceAll("[^a-z0-9_-]", "-")}"
+                        env.HF_FILES = modelConfig.files ?: "pytorch_model.bin,config.json,vocab.txt"
+                        env.RUN_TESTS = modelConfig.run_tests ?: "true"
                         
-                        if (imageExists != "200") {
-                            error("Image ${params.IMAGE_NAME}:${params.IMAGE_TAG} not found in registry ${REGISTRY}")
-                        }
+                        // Записываем конфигурацию
+                        echo "=== Конфигурация модели ==="
+                        echo "Модель: ${env.MODEL_NAME}"
+                        echo "Репозиторий: ${env.HF_REPO}"
+                        echo "Версия: ${env.MODEL_VERSION}"
+                        echo "Тег образа: ${env.IMAGE_TAG}"
+                        echo "Имя образа: ${env.IMAGE_NAME}"
+                        echo "Файлы для загрузки: ${env.HF_FILES}"
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        error("Ошибка при чтении конфигурации: ${e.message}")
                     }
                 }
             }
         }
-        
-        stage('Prepare Docker Deployment') {
-            when {
-                expression { params.DEPLOYMENT_TARGET == 'standalone-server' }
-            }
+
+        stage('Скачиваем модель из Hugging Face') {
             steps {
                 script {
-                    echo "=== Preparing Docker Deployment ==="
+                    def cacheHit = false
+                    def modelFiles = env.HF_FILES.split(',')
+                    sh "mkdir -p ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}"
                     
-                    // Create deployment directory
-                    sh "mkdir -p deployment/${params.DEPLOYMENT_ENV}"
+                    // Проверка модели в кэше
+                    def cacheStatus = sh(script: """
+                        for file in ${modelFiles.join(' ')}; do
+                            if [ ! -f "${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/\$file" ]; then
+                                echo "Модель в кэше не найдена"
+                                exit 0
+                            fi
+                        done
+                        echo "complete"
+                    """, returnStdout: true).trim()
                     
-                    // Parse custom environment variables
-                    def envVars = []
-                    params.CUSTOM_ENVIRONMENT_VARS.split('\n').each { line ->
-                        def parts = line.split('=', 2)
-                        if (parts.length == 2) {
-                            envVars.add([name: parts[0].trim(), value: parts[1].trim()])
-                        }
-                    }
-                    
-                    // Add standard environment variables
-                    envVars.add([name: 'DEPLOYMENT_ENV', value: params.DEPLOYMENT_ENV])
-                    envVars.add([name: 'MODEL_NAME', value: params.IMAGE_NAME.replaceAll('ml-model-', '')])
-                    
-                    if (params.ENABLE_MONITORING) {
-                        envVars.add([name: 'ENABLE_METRICS', value: 'true'])
-                        envVars.add([name: 'METRICS_PORT', value: '9090'])
-                    }
-                    
-                    // Calculate CPU limit as decimal
-                    def cpuLimitValue = (params.RESOURCE_CPU_LIMIT.replace('m', '') as int) / 1000
-                    
-                    // Generate Docker Compose file for standalone servers
-                    sh """
-                        cat > deployment/${params.DEPLOYMENT_ENV}/docker-compose.yml << EOF
-version: '3.8'
-
-services:
-  model-server:
-    image: ${REGISTRY}/${DOCKER_REPO_NAME}/${params.IMAGE_NAME}:${params.IMAGE_TAG}
-    container_name: ${params.IMAGE_NAME}
-    restart: always
-    ports:
-      - "${MODEL_API_PORT}:${MODEL_API_PORT}"
-      ${params.ENABLE_MONITORING ? '- "9090:9090"' : ''}
-    environment:
-      ${params.CUSTOM_ENVIRONMENT_VARS.replace('\n', '\n      ')}
-      DEPLOYMENT_ENV: ${params.DEPLOYMENT_ENV}
-      MODEL_NAME: ${params.IMAGE_NAME.replaceAll('ml-model-', '')}
-      ${params.ENABLE_MONITORING ? 'ENABLE_METRICS: "true"\n      METRICS_PORT: "9090"' : ''}
-    deploy:
-      resources:
-        limits:
-          cpus: '${cpuLimitValue}'
-          memory: ${params.RESOURCE_MEMORY_LIMIT}
-EOF
-
-                        cat > deployment/${params.DEPLOYMENT_ENV}/deploy.sh << EOF
-#!/bin/bash
-set -e
-
-echo "Deploying ${params.IMAGE_NAME}:${params.IMAGE_TAG} to ${params.DEPLOYMENT_ENV} server"
-
-# Pull the latest image
-docker login ${REGISTRY} -u \${NEXUS_USER} -p \${NEXUS_PASSWORD}
-docker-compose pull
-
-# Deploy with zero downtime
-docker-compose up -d --no-deps --force-recreate model-server
-
-echo "Deployment completed successfully"
-EOF
-                        chmod +x deployment/${params.DEPLOYMENT_ENV}/deploy.sh
-                    """
-                }
-            }
-        }
-        
-        stage('Prepare Kubernetes Deployment') {
-            when {
-                expression { params.DEPLOYMENT_TARGET == 'kubernetes' }
-            }
-            steps {
-                script {
-                    echo "=== Preparing Kubernetes Deployment ==="
-                    
-                    // Create deployment directory
-                    sh "mkdir -p deployment/${params.DEPLOYMENT_ENV}"
-                    
-                    // Parse custom environment variables
-                    def envVars = []
-                    params.CUSTOM_ENVIRONMENT_VARS.split('\n').each { line ->
-                        def parts = line.split('=', 2)
-                        if (parts.length == 2) {
-                            envVars.add([name: parts[0].trim(), value: parts[1].trim()])
-                        }
-                    }
-                    
-                    // Add standard environment variables
-                    envVars.add([name: 'DEPLOYMENT_ENV', value: params.DEPLOYMENT_ENV])
-                    envVars.add([name: 'MODEL_NAME', value: params.IMAGE_NAME.replaceAll('ml-model-', '')])
-                    
-                    if (params.ENABLE_MONITORING) {
-                        envVars.add([name: 'ENABLE_METRICS', value: 'true'])
-                        envVars.add([name: 'METRICS_PORT', value: '9090'])
-                    }
-                    
-                    // Convert env vars to format needed for templates
-                    def envVarsFormatted = envVars.collect { 
-                        "- name: ${it.name}\n          value: \"${it.value}\"" 
-                    }.join('\n          ')
-                    
-                    // Calculate CPU request as half of limit
-                    def cpuRequest = "${(params.RESOURCE_CPU_LIMIT.replace('m', '') as int) / 2}m"
-                    // Calculate memory request as half of limit
-                    def memRequest = "${(params.RESOURCE_MEMORY_LIMIT.replace('Gi', '') as int) / 2}Gi"
-                    
-                    // Generate Kubernetes deployment files
-                    sh """
-                        cat > deployment/${params.DEPLOYMENT_ENV}/deployment.yaml << EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${DEPLOYMENT_NAME}
-  namespace: ${NAMESPACE}
-  labels:
-    app: ${DEPLOYMENT_NAME}
-    environment: ${params.DEPLOYMENT_ENV}
-spec:
-  replicas: ${params.REPLICAS}
-  selector:
-    matchLabels:
-      app: ${DEPLOYMENT_NAME}
-  template:
-    metadata:
-      labels:
-        app: ${DEPLOYMENT_NAME}
-      annotations:
-        prometheus.io/scrape: "${params.ENABLE_MONITORING}"
-        prometheus.io/port: "9090"
-    spec:
-      containers:
-      - name: model-server
-        image: ${REGISTRY}/${DOCKER_REPO_NAME}/${params.IMAGE_NAME}:${params.IMAGE_TAG}
-        imagePullPolicy: Always
-        ports:
-        - containerPort: ${MODEL_API_PORT}
-          name: http
-        ${params.ENABLE_MONITORING ? '- containerPort: 9090\n          name: metrics' : ''}
-        resources:
-          limits:
-            cpu: ${params.RESOURCE_CPU_LIMIT}
-            memory: ${params.RESOURCE_MEMORY_LIMIT}
-          requests:
-            cpu: ${cpuRequest}
-            memory: ${memRequest}
-        env:
-          ${envVarsFormatted}
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: ${MODEL_API_PORT}
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: ${MODEL_API_PORT}
-          initialDelaySeconds: 60
-          periodSeconds: 20
-EOF
-
-                        cat > deployment/${params.DEPLOYMENT_ENV}/service.yaml << EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${DEPLOYMENT_NAME}
-  namespace: ${NAMESPACE}
-  labels:
-    app: ${DEPLOYMENT_NAME}
-    environment: ${params.DEPLOYMENT_ENV}
-spec:
-  selector:
-    app: ${DEPLOYMENT_NAME}
-  ports:
-  - port: 80
-    targetPort: ${MODEL_API_PORT}
-    name: http
-  ${params.ENABLE_MONITORING ? '- port: 9090\n    targetPort: 9090\n    name: metrics' : ''}
-  type: ClusterIP
-EOF
-
-                        cat > deployment/${params.DEPLOYMENT_ENV}/ingress.yaml << EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ${DEPLOYMENT_NAME}
-  namespace: ${NAMESPACE}
-  annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-spec:
-  rules:
-  - host: "${params.IMAGE_NAME.replaceAll('ml-model-', '')}.models.${params.DEPLOYMENT_ENV}.example.com"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: ${DEPLOYMENT_NAME}
-            port:
-              number: 80
-EOF
-                    """
-                    
-                    if (params.ENABLE_AUTOSCALING) {
-                        sh """
-                            cat > deployment/${params.DEPLOYMENT_ENV}/hpa.yaml << EOF
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: ${DEPLOYMENT_NAME}
-  namespace: ${NAMESPACE}
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: ${DEPLOYMENT_NAME}
-  minReplicas: ${params.REPLICAS}
-  maxReplicas: ${params.REPLICAS.toInteger() * 3}
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-EOF
-                        """
-                    }
-                    
-                    // Package as Helm chart
-                    sh """
-                        mkdir -p deployment/${params.DEPLOYMENT_ENV}/helm-chart/templates
-                        cp deployment/${params.DEPLOYMENT_ENV}/*.yaml deployment/${params.DEPLOYMENT_ENV}/helm-chart/templates/
-                        
-                        cat > deployment/${params.DEPLOYMENT_ENV}/helm-chart/Chart.yaml << EOF
-apiVersion: v2
-name: ${params.IMAGE_NAME}
-description: Helm chart for ${params.IMAGE_NAME} ML model
-type: application
-version: 1.0.0
-appVersion: "${params.IMAGE_TAG}"
-EOF
-
-                        cat > deployment/${params.DEPLOYMENT_ENV}/helm-chart/values.yaml << EOF
-# Default values for ${params.IMAGE_NAME}
-replicaCount: ${params.REPLICAS}
-image:
-  repository: ${REGISTRY}/${DOCKER_REPO_NAME}/${params.IMAGE_NAME}
-  tag: ${params.IMAGE_TAG}
-  pullPolicy: Always
-EOF
-
-                        helm package deployment/${params.DEPLOYMENT_ENV}/helm-chart --destination deployment/${params.DEPLOYMENT_ENV}/
-                    """
-                }
-            }
-        }
-        
-        stage('Deploy to Docker') {
-            when {
-                expression { params.DEPLOYMENT_TARGET == 'standalone-server' }
-            }
-            steps {
-                script {
-                    echo "=== Deploying to Standalone Server ==="
-                    
-                    // Deploy to server using SSH
-                    withCredentials([
-                        sshUserPrivateKey(credentialsId: "${params.DEPLOYMENT_ENV}-ssh-key", keyFileVariable: 'SSH_KEY'),
-                        usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')
-                    ]) {
-                        def serverHost = "${params.DEPLOYMENT_ENV}-server.example.com"
-                        def deploymentDir = "/opt/ml-models/${params.IMAGE_NAME}"
-                        
-                        sh """
-                            # Create deployment directory on remote server
-                            ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no deployer@${serverHost} "mkdir -p ${deploymentDir}"
-                            
-                            # Copy deployment files
-                            scp -i ${SSH_KEY} -o StrictHostKeyChecking=no deployment/${params.DEPLOYMENT_ENV}/docker-compose.yml deployer@${serverHost}:${deploymentDir}/
-                            scp -i ${SSH_KEY} -o StrictHostKeyChecking=no deployment/${params.DEPLOYMENT_ENV}/deploy.sh deployer@${serverHost}:${deploymentDir}/
-                            
-                            # Run deployment script
-                            ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no deployer@${serverHost} "cd ${deploymentDir} && NEXUS_USER=${NEXUS_USER} NEXUS_PASSWORD=${NEXUS_PASSWORD} ./deploy.sh"
-                            
-                            echo "=== Service Endpoint ==="
-                            echo "http://${serverHost}:${MODEL_API_PORT}"
-                        """
-                    }
-                }
-            }
-        }
-        
-        stage('Deploy to Kubernetes') {
-            when {
-                expression { params.DEPLOYMENT_TARGET == 'kubernetes' }
-            }
-            steps {
-                script {
-                    withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
-                        echo "=== Deploying to Kubernetes ==="
-                        
-                        // Create namespace if it doesn't exist
-                        sh "kubectl --kubeconfig=${KUBECONFIG} create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl --kubeconfig=${KUBECONFIG} apply -f -"
-                        
-                        // Deploy with Helm
-                        def helmChartPath = sh(script: "ls deployment/${params.DEPLOYMENT_ENV}/*.tgz", returnStdout: true).trim()
-                        
-                        sh """
-                            helm --kubeconfig=${KUBECONFIG} upgrade --install ${DEPLOYMENT_NAME} ${helmChartPath} \
-                                --namespace ${NAMESPACE} \
-                                --set image.tag=${params.IMAGE_TAG} \
-                                --set replicaCount=${params.REPLICAS} \
-                                --timeout 5m \
-                                --wait
-                        """
-                        
-                        // Verify deployment
-                        sh """
-                            kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE} --timeout=300s
-                            
-                            # Get service endpoint
-                            echo "=== Service Endpoints ==="
-                            kubectl --kubeconfig=${KUBECONFIG} get svc ${DEPLOYMENT_NAME} -n ${NAMESPACE} -o wide
-                            
-                            echo "=== Ingress Details ==="
-                            kubectl --kubeconfig=${KUBECONFIG} get ingress ${DEPLOYMENT_NAME} -n ${NAMESPACE} -o wide
-                        """
-                    }
-                }
-            }
-        }
-        
-        stage('Run Health Checks') {
-            steps {
-                script {
-                    echo "=== Running Health Checks ==="
-                    
-                    if (params.DEPLOYMENT_TARGET == 'kubernetes') {
-                        withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
-                            // Get service endpoint
-                            def podName = sh(
-                                script: "kubectl --kubeconfig=${KUBECONFIG} get pods -n ${NAMESPACE} -l app=${DEPLOYMENT_NAME} -o jsonpath='{.items[0].metadata.name}'",
-                                returnStdout: true
-                            ).trim()
-                            
-                            // Forward port to access the service
-                            sh """
-                                # Setup port-forward in background
-                                kubectl --kubeconfig=${KUBECONFIG} port-forward pod/${podName} 8888:${MODEL_API_PORT} -n ${NAMESPACE} &
-                                PORT_FORWARD_PID=\$!
-                                
-                                # Wait for port-forward to establish
-                                sleep 5
-                                
-                                # Run health check
-                                curl -s http://localhost:8888/health > health_check.json || echo "Health check failed" > health_check.json
-                                
-                                # Stop port-forward
-                                kill \$PORT_FORWARD_PID || true
-                            """
-                        }
-                    } else if (params.DEPLOYMENT_TARGET == 'standalone-server') {
-                        withCredentials([sshUserPrivateKey(credentialsId: "${params.DEPLOYMENT_ENV}-ssh-key", keyFileVariable: 'SSH_KEY')]) {
-                            def serverHost = "${params.DEPLOYMENT_ENV}-server.example.com"
-                            
-                            sh """
-                                # Run health check via SSH
-                                ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no deployer@${serverHost} "curl -s http://localhost:${MODEL_API_PORT}/health" > health_check.json || echo "Health check failed" > health_check.json
-                            """
-                        }
-                    }
-                    
-                    // Analyze health check results
-                    def healthStatus = readFile('health_check.json').trim()
-                    if (healthStatus.contains("status") && healthStatus.contains("ok")) {
-                        echo "✅ Health check passed"
+                    if (cacheStatus == "complete") {
+                        echo "? Модель найдена в кэше, копируем..."
+                        sh "mkdir -p models/${env.MODEL_NAME} && cp -r ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/* models/${env.MODEL_NAME}/"
+                        cacheHit = true
                     } else {
-                        echo "⚠️ Health check did not return expected status"
+                        echo "? Модель не найдена в кэше, скачиваем из Hugging Face..."
                         
-                        // Ask if we should continue
-                        def userChoice = input message: '⚠️ Health check did not pass. Continue anyway?', 
-                                          ok: 'Continue', 
-                                          parameters: [choice(choices: 'No\nYes', description: 'Select action', name: 'continueDeployment')]
-                        if (userChoice == 'No') {
-                            error("Deployment stopped due to failed health check")
-                        } else {
-                            echo "⚠️ Continuing despite health check issues"
+                        sh "mkdir -p models/${env.MODEL_NAME}"
+                        
+                        retry(env.MAX_RETRIES.toInteger()) {
+                            try {
+                                timeout(time: 30, unit: 'MINUTES') {
+                                    sh """
+                                        set -e
+                                        for file in ${modelFiles.join(' ')}; do
+                                            echo "Скачиваем \$file..."
+                                            curl -f -H "Authorization: Bearer ${HUGGINGFACE_API_TOKEN}" \
+                                                -L https://huggingface.co/${env.HF_REPO}/resolve/main/\$file \
+                                                -o models/${env.MODEL_NAME}/\$file
+                                                
+                                            # Копируем в кэш
+                                            cp models/${env.MODEL_NAME}/\$file ${MODEL_CACHE_DIR}/${env.MODEL_NAME}/${env.MODEL_VERSION}/
+                                        done
+                                    """
+                                }
+                            } catch (Exception e) {
+                                echo "?? Ошибка при скачивании: ${e.message}. Повторная попытка..."
+                                throw e
+                            }
                         }
                     }
+                    
+                    // Validate downloaded files
+                    def fileCount = sh(script: "ls -A models/${env.MODEL_NAME} | wc -l", returnStdout: true).trim().toInteger()
+                    if (fileCount == 0) {
+                        error("Ошибка: Папка для модели пуста после загрузки! Выходим..")
+                    }
+                    
+                    echo "Успешно получили модель: ${env.MODEL_NAME} (из кэша: ${cacheHit})"
+                    
+                    // Генерируем метадату модели
+                    sh """
+                        cat > models/${env.MODEL_NAME}/metadata.json << EOF
+                        {
+                            "model_name": "${env.MODEL_NAME}",
+                            "huggingface_repo": "${env.HF_REPO}",
+                            "version": "${env.MODEL_VERSION}",
+                            "build_date": "${BUILD_DATE}",
+                            "build_id": "${BUILD_ID}",
+                            "jenkins_job": "${env.JOB_NAME}",
+                            "jenkins_build": "${env.BUILD_NUMBER}"
+                        }
+                        EOF
+                    """
+                }
+            }
+        }
+
+        stage('Сохраняем модель в MinIO') {
+            steps {
+                script {
+                    def modelPath = "${WORKSPACE}/models/${env.MODEL_NAME}"
+                    def modelFiles = sh(script: "ls -A ${modelPath} | wc -l", returnStdout: true).trim()
+
+                    if (modelFiles.toInteger() == 0) {
+                        error("Ошибка: Папка для модели пуста! Выходим..")
+                    }
+
+                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
+                        sh """
+                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
+
+                            if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
+                                echo "Creating bucket ${BUCKET_NAME}..."
+                                /usr/local/bin/mc mb myminio/${BUCKET_NAME}
+                            fi
+
+                            /usr/local/bin/mc cp --recursive ${modelPath} myminio/${BUCKET_NAME}/
+                        """
+                    }
+                    
+                    echo "? Модель успешно сохранена в MinIO"
+                }
+            }
+        }
+
+       stage('Создание папки для модели и копирование из MinIO') {
+            steps {
+                script {
+                    def modelPath = "/tmp-models/${env.MODEL_NAME}"
+                    sh "mkdir -p ${modelPath}"
+                    
+                    withCredentials([usernamePassword(credentialsId: 'minio-credentials', usernameVariable: 'MINIO_USER', passwordVariable: 'MINIO_PASS')]) {
+                        sh """
+                            /usr/local/bin/mc alias set myminio ${MINIO_URL} ${MINIO_USER} ${MINIO_PASS} --quiet || true
+                            
+                            if ! /usr/local/bin/mc ls myminio/${BUCKET_NAME} >/dev/null 2>&1; then
+                                echo "Creating bucket ${BUCKET_NAME}..."
+                                /usr/local/bin/mc mb myminio/${BUCKET_NAME}
+                            fi
+        
+                            /usr/local/bin/mc cp --recursive myminio/${BUCKET_NAME}/${MODEL_NAME} ${modelPath}/
+                        """
+                    }
                 }
             }
         }
         
-        stage('Configure Docker Monitoring') {
-            when {
-                expression { return params.ENABLE_MONITORING == true && params.DEPLOYMENT_TARGET == 'standalone-server' }
-            }
+
+        stage('Подготовка Flask API') {
             steps {
                 script {
-                    echo "=== Setting up Monitoring for Docker Deployment ==="
-                    
-                    withCredentials([sshUserPrivateKey(credentialsId: "${params.DEPLOYMENT_ENV}-ssh-key", keyFileVariable: 'SSH_KEY')]) {
-                        def serverHost = "${params.DEPLOYMENT_ENV}-server.example.com"
+                    try {
+                        echo "?? Начинаем подготовку Flask API для модели"
                         
+                        // Backup existing app.py if present
                         sh """
-                            # Create Prometheus config for model
-                            cat > deployment/${params.DEPLOYMENT_ENV}/prometheus-job.yml << EOF
-- job_name: '${params.IMAGE_NAME}'
-  scrape_interval: 15s
-  static_configs:
-    - targets: ['localhost:9090']
-  metrics_path: /metrics
-  labels:
-    env: '${params.DEPLOYMENT_ENV}'
-    model: '${params.IMAGE_NAME.replaceAll('ml-model-', '')}'
-EOF
+                            # Create Flask API app.py
+                            cat > app.py << 'EOF'
+from flask import Flask, request, jsonify
+from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
+import os
+import shutil
 
-                            # Add to server Prometheus config
-                            scp -i ${SSH_KEY} -o StrictHostKeyChecking=no deployment/${params.DEPLOYMENT_ENV}/prometheus-job.yml deployer@${serverHost}:/tmp/
-                            ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no deployer@${serverHost} "cat /tmp/prometheus-job.yml >> /etc/prometheus/jobs/${params.IMAGE_NAME}.yml && systemctl restart prometheus"
-                        """
-                    }
-                }
-            }
-        }
+app = Flask(__name__)
+
+# Path where the model is stored
+MODEL_ROOT_DIR = "/models"
+
+# Ensure the models directory exists
+if not os.path.exists(MODEL_ROOT_DIR):
+    os.makedirs(MODEL_ROOT_DIR)
+
+# Find the model folder
+def load_model():
+    # Clean up any previous models before downloading a new one
+    for item in os.listdir(MODEL_ROOT_DIR):
+        item_path = os.path.join(MODEL_ROOT_DIR, item)
+        if os.path.isdir(item_path):
+            print(f"??? Removing old model: {item_path}")
+            shutil.rmtree(item_path)
+
+    # Find the newly downloaded model folder inside /models
+    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
+
+    if len(model_subdirs) == 0:
+        raise ValueError("? No model found in /models. Please download a model first.")
+    elif len(model_subdirs) > 1:
+        raise ValueError(f"?? Multiple models found in /models: {model_subdirs}. Please keep only one.")
+
+    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
+    print(f"? Using model from: {MODEL_DIR}")
+
+    # Load tokenizer and model
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+        model = AutoModelForQuestionAnswering.from_pretrained(MODEL_DIR)
+        qa_pipeline = pipeline("question-answering", model=model, tokenizer=tokenizer)
+        print(f"? Model loaded successfully from {MODEL_DIR}")
+        return qa_pipeline
+    except Exception as e:
+        raise RuntimeError(f"? Model Load Error: {e}")
+
+# Load the model
+qa_pipeline = load_model()
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy"}), 200
+
+@app.route('/api/predict', methods=['POST'])
+def predict():
+    try:
+        data = request.get_json()
         
-        stage('Configure Kubernetes Monitoring') {
-            when {
-                expression { return params.ENABLE_MONITORING == true && params.DEPLOYMENT_TARGET == 'kubernetes' }
-            }
-            steps {
-                script {
-                    echo "=== Setting up Monitoring for Kubernetes Deployment ==="
-                    
-                    withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
-                        // Create ServiceMonitor for Prometheus
-                        sh """
-                            cat > deployment/${params.DEPLOYMENT_ENV}/servicemonitor.yaml << EOF
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: ${DEPLOYMENT_NAME}
-  namespace: ${NAMESPACE}
-  labels:
-    app: ${DEPLOYMENT_NAME}
-    release: prometheus
-spec:
-  selector:
-    matchLabels:
-      app: ${DEPLOYMENT_NAME}
-  endpoints:
-  - port: metrics
-    interval: 15s
-    path: /metrics
-EOF
-
-                            kubectl --kubeconfig=${KUBECONFIG} apply -f deployment/${params.DEPLOYMENT_ENV}/servicemonitor.yaml
-                        """
-                        
-                        // Configure default alert rules
-                        sh """
-                            cat > deployment/${params.DEPLOYMENT_ENV}/alertrules.yaml << EOF
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  name: ${DEPLOYMENT_NAME}-rules
-  namespace: ${NAMESPACE}
-  labels:
-    app: ${DEPLOYMENT_NAME}
-    prometheus: k8s
-    role: alert-rules
-spec:
-  groups:
-  - name: ${DEPLOYMENT_NAME}.rules
-    rules:
-    - alert: ModelPredictionLatencyHigh
-      expr: histogram_quantile(0.95, sum(rate(prediction_latency_seconds_bucket{service="${DEPLOYMENT_NAME}"}[5m])) by (le)) > 0.5
-      for: 5m
-      labels:
-        severity: warning
-      annotations:
-        summary: "High prediction latency for ${params.IMAGE_NAME}"
-        description: "95th percentile of prediction latency is above 500ms for 5 minutes."
-    - alert: ModelServerDown
-      expr: up{app="${DEPLOYMENT_NAME}"} == 0
-      for: 1m
-      labels:
-        severity: critical
-      annotations:
-        summary: "Model server down"
-        description: "The ${params.IMAGE_NAME} model server has been down for more than 1 minute."
-EOF
-
-                            kubectl --kubeconfig=${KUBECONFIG} apply -f deployment/${params.DEPLOYMENT_ENV}/alertrules.yaml
-                        """
-                    }
-                }
-            }
-        }
+        # Check if required fields are present
+        if not data or 'question' not in data or 'context' not in data:
+            return jsonify({"error": "Missing required fields: 'question' and 'context'"}), 400
         
-        stage('Register API Documentation') {
-            steps {
-                script {
-                    echo "=== Registering API Documentation ==="
-                    
-                    // Generate API docs URL
-                    def apiDocsUrl = ""
-                    if (params.DEPLOYMENT_TARGET == 'kubernetes') {
-                        apiDocsUrl = "https://${params.IMAGE_NAME.replaceAll('ml-model-', '')}.models.${params.DEPLOYMENT_ENV}.example.com/docs"
-                    } else {
-                        apiDocsUrl = "http://${params.DEPLOYMENT_ENV}-server.example.com:${MODEL_API_PORT}/docs"
-                    }
-                    
-                    // Register in central API catalog
-                    withCredentials([string(credentialsId: 'api-catalog-token', variable: 'API_CATALOG_TOKEN')]) {
-                        sh """
-                            # Create API metadata
-                            cat > api-metadata.json << EOF
-{
-  "name": "${params.IMAGE_NAME.replaceAll('ml-model-', '')}",
-  "version": "${params.IMAGE_TAG}",
-  "environment": "${params.DEPLOYMENT_ENV}",
-  "description": "ML model API for ${params.IMAGE_NAME.replaceAll('ml-model-', '')}",
-  "endpoints": [
-    {
-      "path": "/predict",
-      "method": "POST",
-      "description": "Make predictions with the model"
-    },
-    {
-      "path": "/health",
-      "method": "GET",
-      "description": "Check model health"
-    }
-  ],
-  "documentation_url": "${apiDocsUrl}",
-  "deployed_at": "\$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-}
-EOF
+        # Extract question and context
+        question = data['question']
+        context = data['context']
+        
+        # Generate answer
+        response = qa_pipeline(question=question, context=context)
+        
+        return jsonify({
+            "answer": response["answer"],
+            "score": float(response["score"]),
+            "start": response["start"],
+            "end": response["end"]
+        }), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-                            # Register with API catalog
-                            curl -X POST "http://api-catalog.example.com/api/v1/register" \
-                                -H "Authorization: Bearer ${API_CATALOG_TOKEN}" \
-                                -H "Content-Type: application/json" \
-                                -d @api-metadata.json
-                        """
-                    }
-                }
-            }
-        }
-    }
+@app.route('/api/info', methods=['GET'])
+def model_info():
+    # Read metadata if it exists
+    model_subdirs = [d for d in os.listdir(MODEL_ROOT_DIR) if os.path.isdir(os.path.join(MODEL_ROOT_DIR, d))]
+    if not model_subdirs:
+        return jsonify({"error": "No model loaded"}), 404
     
-    post {
-        success {
-            script {
-                // Create deployment summary
-                sh """
-                    # Create deployment summary
-                    cat > deployment-summary.md << EOF
-## Deployment Summary
+    MODEL_DIR = os.path.join(MODEL_ROOT_DIR, model_subdirs[0])
+    metadata_path = os.path.join(MODEL_DIR, "metadata.json")
+    
+    if os.path.exists(metadata_path):
+        import json
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        return jsonify(metadata), 200
+    else:
+        return jsonify({"model_dir": MODEL_DIR}), 200
 
-**Model**: ${params.IMAGE_NAME}:${params.IMAGE_TAG}
-**Environment**: ${params.DEPLOYMENT_ENV}
-**Deployment Target**: ${params.DEPLOYMENT_TARGET}
-**Replicas**: ${params.REPLICAS}
-**Monitoring**: ${params.ENABLE_MONITORING ? 'Enabled' : 'Disabled'}
-**Autoscaling**: ${params.ENABLE_AUTOSCALING && params.DEPLOYMENT_TARGET == 'kubernetes' ? 'Enabled' : 'Disabled'}
-
-### Endpoints
-
-${params.DEPLOYMENT_TARGET == 'kubernetes' ? 
-    "- API: https://${params.IMAGE_NAME.replaceAll('ml-model-', '')}.models.${params.DEPLOYMENT_ENV}.example.com/\n- Documentation: https://${params.IMAGE_NAME.replaceAll('ml-model-', '')}.models.${params.DEPLOYMENT_ENV}.example.com/docs" : 
-    "- API: http://${params.DEPLOYMENT_ENV}-server.example.com:${MODEL_API_PORT}/\n- Documentation: http://${params.DEPLOYMENT_ENV}-server.example.com:${MODEL_API_PORT}/docs"}
-
-### Resource Allocation
-- CPU: ${params.RESOURCE_CPU_LIMIT}
-- Memory: ${params.RESOURCE_MEMORY_LIMIT}
-
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
 EOF
-                """
-                
-                // Archive deployment artifacts
-                archiveArtifacts artifacts: 'deployment/**/*,*-summary.md,health_check.json', fingerprint: true
-                
-                // Send notification
-                sh """
-                    # Send deployment notification
-                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                        -d chat_id=${TELEGRAM_CHAT_ID} \
-                        -d parse_mode=Markdown \
-                        -d text="✅ *Model Deployed Successfully!* 🚀\\n\\n*Model:* ${params.IMAGE_NAME}:${params.IMAGE_TAG}\\n*Environment:* ${params.DEPLOYMENT_ENV}\\n*Target:* ${params.DEPLOYMENT_TARGET}\\n\\n*Access via:* ${params.DEPLOYMENT_TARGET == 'kubernetes' ? 
-                            "https://${params.IMAGE_NAME.replaceAll('ml-model-', '')}.models.${params.DEPLOYMENT_ENV}.example.com/" : 
-                            "http://${params.DEPLOYMENT_ENV}-server.example.com:${MODEL_API_PORT}/"}"
-                """
+                        
+                            # Update requirements.txt to include Flask
+                            if [ -f requirements.txt ]; then
+                                # Check if flask is already in requirements
+                                if ! grep -q "flask" requirements.txt; then
+                                    echo "flask>=2.0.0" >> requirements.txt
+                                    echo "gunicorn>=20.1.0" >> requirements.txt
+                                fi
+                            else
+                                echo "transformers>=4.10.0" > requirements.txt
+                                echo "flask>=2.0.0" >> requirements.txt
+                                echo "gunicorn>=20.1.0" >> requirements.txt
+                            fi
+                        """
+                        
+                        echo "? Flask API успешно подготовлена"
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        error("Ошибка при подготовке Flask API: ${e.message}")
+                    }
+                }
+            }
+        }    
+
+        stage('Параллельные задачи') {
+            parallel {
+                stage('Собираем докер образ') {
+                    steps {
+                        script {
+                            try {
+                                echo "?? Начинаем сборку Docker образа: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                                
+                                // Создаем аргументы сборки для лучшей читабельности
+                                sh """
+                                    cat > docker-build-args.txt << EOF
+                                    MINIO_URL=${MINIO_URL}
+                                    BUCKET_NAME=${BUCKET_NAME}
+                                    MODEL_NAME=${env.MODEL_NAME}
+                                    MODEL_VERSION=${env.MODEL_VERSION}
+                                    BUILD_DATE=${BUILD_DATE}
+                                    BUILD_ID=${BUILD_ID}
+                                    EOF
+                                """
+                               
+                                // Сборка с оптимизаций под кеш
+                                sh """
+                                    docker build \
+                                        docker build \
+                                            --build-arg BUILDKIT_INLINE_CACHE=1 \
+                                            --cache-from ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest \
+                                            --build-arg MINIO_URL=${MINIO_URL} \
+                                            --build-arg BUCKET_NAME=${BUCKET_NAME} \
+                                            --build-arg MODEL_NAME=${env.MODEL_NAME} \
+                                            --build-arg MODEL_VERSION=${env.MODEL_VERSION} \
+                                            --build-arg BUILD_DATE=${BUILD_DATE} \
+                                            --build-arg BUILD_ID=${BUILD_ID} \
+                                            -t ${env.IMAGE_NAME}:${IMAGE_TAG} \
+                                            -f Dockerfile .  
+                                """
+                                
+                                echo "? Успешно собран Docker образ: ${env.IMAGE_NAME}:${IMAGE_TAG}"
+                            } catch (Exception e) {
+                                currentBuild.result = 'FAILURE'
+                                error("Ошибка при сборке Docker образа: ${e.message}")
+                            }
+                        }
+                    }
+                }
+            
+                stage('Подготовка Trivy') {
+                    steps {
+                        script {
+                            try {
+                                echo "?? Подготовка Trivy для сканирования"
+                                
+                                sh """
+                                    mkdir -p ${TRIVY_CACHE_DIR}
+                                    mkdir -p trivy-reports
+                                    
+                                    # Обновляем базу данных Trivy
+                                    trivy image --cache-dir=${TRIVY_CACHE_DIR} --download-db-only
+                                """
+                                
+                                echo "? Подготовка Trivy завершена успешно"
+                            } catch (Exception e) {
+                                currentBuild.result = 'FAILURE'
+                                error("Ошибка при подготовке Trivy: ${e.message}")
+                            }
+                        }
+                    }
+                }
             }
         }
-        
-        failure {
-            script {
-                // Send failure notification
-                sh """
-                    # Send deployment failure notification
-                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-                        -d chat_id=${TELEGRAM_CHAT_ID} \
-                        -d parse_mode=Markdown \
-                        -d text="❌ *Model Deployment Failed!* 🚨\\n\\n*Model:* ${params.IMAGE_NAME}:${params.IMAGE_TAG}\\n*Environment:* ${params.DEPLOYMENT_ENV}\\n*Target:* ${params.DEPLOYMENT_TARGET}\\n\\n[View Logs](${env.BUILD_URL}console)"
-                """
+            
+        stage('Проверка образа') {
+            parallel {
+                stage('Сканируем образ с помощью Trivy') {
+                    steps {
+                        script {
+                            try {
+                                echo "?? Начинаем сканирование образа на уязвимости"
+                                
+                                // Сканируем на уязвимости (включая MEDIUM)
+                                sh """
+                                    trivy image --cache-dir=${TRIVY_CACHE_DIR} \
+                                        --severity HIGH,CRITICAL,MEDIUM \
+                                        --format table \
+                                        --scanners vuln \
+                                        ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.txt || true
+                    
+                                    trivy image --cache-dir=${TRIVY_CACHE_DIR} \
+                                        --severity HIGH,CRITICAL,MEDIUM \
+                                        --format json \
+                                        ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/scan-results.json || true
+                                        
+                                    # Генерируем SBOM
+                                    trivy image --cache-dir=${TRIVY_CACHE_DIR} \
+                                        --format cyclonedx \
+                                        ${env.IMAGE_NAME}:${IMAGE_TAG} > trivy-reports/sbom.xml || true
+                                """
+                                
+                                echo "=== ?? Результаты сканирования Trivy ==="
+                                sh "cat trivy-reports/scan-results.txt"
+                                
+                                archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
+                                
+                                // Отправляем Trivy отчеты через Telegram
+                                sh """
+                                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
+                                    -F chat_id=${TELEGRAM_CHAT_ID} \
+                                    -F document=@trivy-reports/scan-results.txt \
+                                    -F caption="?? *Trivy Scan Report* для ${env.IMAGE_NAME}:${IMAGE_TAG} (Build #${BUILD_NUMBER})" \
+                                    -F parse_mode=Markdown
+                                """
+                                
+                                // Считаем уязвимости по уровню критичности
+                                def criticalCount = sh(script: "grep -c 'CRITICAL' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
+                                def highCount = sh(script: "grep -c 'HIGH' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
+                                def mediumCount = sh(script: "grep -c 'MEDIUM' trivy-reports/scan-results.txt || echo 0", returnStdout: true).trim()
+                                
+                                echo "?? Найдено уязвимостей: CRITICAL: ${criticalCount}, HIGH: ${highCount}, MEDIUM: ${mediumCount}"
+                                
+                                if (criticalCount.toInteger() > 0) {
+                                    def userChoice = input message: '?? Найдены критические уязвимости. Хотите продолжить?', 
+                                                      ok: 'Продолжить', 
+                                                      parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
+                                    if (userChoice == 'Нет') {
+                                        error("Сборка остановлена из-за критических уязвимостей.")
+                                    } else {
+                                        echo "?? Продолжаем несмотря на уязвимости."
+                                    }
+                                } else {
+                                    echo "? Критических уязвимостей не обнаружено."
+                                }
+                            } catch (Exception e) {
+                                echo "?? Ошибка в процессе сканирования: ${e.message}"
+                                // Продолжаем
+                            }
+                        }
+                    }
+                }
                 
-                // Archive any artifacts that might have been created
-                archiveArtifacts artifacts: 'deployment/**/*,*-summary.md,health_check.json', allowEmptyArchive: true
+                stage('Smoke тесты') {
+                    when {
+                        expression { return env.RUN_TESTS == 'true' }
+                    }
+                    steps {
+                        script {
+                            try {
+                                echo "?? Запускаем базовые тесты Docker образа с Flask API"
+                                
+                                sh """
+                                    # Запускаем контейнер для тестирования
+                                    docker run -d -p 5000:5000 --name test-${env.IMAGE_NAME} ${env.IMAGE_NAME}:${IMAGE_TAG}
+                                    
+                                    # Проверяем, что контейнер запустился успешно
+                                    if [ \$(docker inspect -f '{{.State.Running}}' test-${env.IMAGE_NAME}) = "true" ]; then
+                                        echo "? Контейнер успешно запущен"
+                                    else
+                                        echo "? Контейнер не запустился"
+                                        exit 1
+                                    fi
+                                    
+                                    # Даем время на инициализацию Flask API
+                                    sleep 10
+                                    
+                                    # Проверяем endpoint здоровья API
+                                    if curl -s http://localhost:5000/api/health | grep -q "healthy"; then
+                                        echo "? API Endpoint проверки здоровья работает корректно"
+                                    else
+                                        echo "? API не отвечает корректно"
+                                        exit 1
+                                    fi
+                                    
+                                    # Получаем логи контейнера
+                                    docker logs test-${env.IMAGE_NAME} > container-logs.txt
+                                    
+                                    # Проверяем логи на наличие ошибок
+                                    if grep -i "error\\|exception\\|failure" container-logs.txt; then
+                                        echo "?? В логах обнаружены ошибки!"
+                                    else
+                                        echo "? Логи не содержат ошибок"
+                                    fi
+                                    
+                                    # Останавливаем тестовый контейнер
+                                    docker stop test-${env.IMAGE_NAME} || true
+                                    docker rm test-${env.IMAGE_NAME} || true
+                                """
+                                
+                                archiveArtifacts artifacts: 'container-logs.txt', fingerprint: true
+                                echo "? Smoke тесты пройдены успешно"
+                            } catch (Exception e) {
+                                echo "?? Ошибка при выполнении тестов: ${e.message}"
+                                sh "docker stop test-${env.IMAGE_NAME} || true"
+                                sh "docker rm test-${env.IMAGE_NAME} || true"
+                                
+                                // Спрашиваем продолжать ли?
+                                def userChoice = input message: '?? Тесты не прошли. Хотите продолжить сборку?', 
+                                                  ok: 'Продолжить', 
+                                                  parameters: [choice(choices: 'Нет\nДа', description: 'Выберите действие', name: 'continueBuild')]
+                                if (userChoice == 'Нет') {
+                                    error("Сборка остановлена из-за неудачных тестов.")
+                                } else {
+                                    echo "?? Продолжаем несмотря на неудачные тесты."
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        stage('Публикация образа в Nexus') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
+                    script {
+                        try {
+                            echo "?? Публикуем Docker образ в Nexus"
+                            
+                            //Логинимся в Nexus
+                            retry(3) {
+                                sh "echo \"$NEXUS_PASSWORD\" | docker login -u \"$NEXUS_USER\" --password-stdin http://${REGISTRY}"
+                            }
+                            
+                            // Ставим тэги на образ
+                            sh """
+                                docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                                docker tag ${env.IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
+                            """
+                            
+                            // Пушим образ
+                            retry(3) {
+                                sh """
+                                    docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                                    docker push ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:latest
+                                """
+                            }
+                            
+                            echo "? Успешно опубликовали образ: ${env.IMAGE_NAME} в Nexus"
+                            
+                            // Генерируем документацию образа
+                            sh """
+                                cat > image-info.md << EOF
+                                # ${env.IMAGE_NAME}:${IMAGE_TAG}
+                                
+                                ## Информация об образе
+                                
+                                - **Модель**: ${env.MODEL_NAME}
+                                - **Репозиторий**: ${env.HF_REPO}
+                                - **Версия**: ${env.MODEL_VERSION}
+                                - **Дата сборки**: ${BUILD_DATE}
+                                - **ID сборки**: ${BUILD_ID}
+                                - **Jenkins Job**: ${env.JOB_NAME}
+                                - **Jenkins Build**: ${env.BUILD_NUMBER}
+                                
+                                ## Использование
+                                
+                                
+                                docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                                docker run -p 8000:8000 ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+                                
+                                
+                                ## Безопасность
+                                
+                                Просканировано с помощью Trivy. Отчет доступен в артефактах сборки.
+                                EOF
+                            """
+                            
+                            archiveArtifacts artifacts: 'image-info.md', fingerprint: true
+                            
+                            // Метрики
+                            def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}'", returnStdout: true).trim()
+                            echo "?? Размер образа: ${imageSize}"
+                            
+                            // Время сборки
+                            def duration = currentBuild.durationString.replace(' and counting', '')
+                            echo "?? Время сборки: ${duration}"
+                        } catch (Exception e) {
+                            currentBuild.result = 'FAILURE'
+                            error("Ошибка при публикации образа: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
+
+       stage('Прибираемся') {
+            steps {
+                script {
+                    echo "?? Очищаем рабочую область..."
         
-        always {
-            cleanWs()
+                    // Очистка временных файлов, моделей и Docker образов
+                    sh """
+                        # Удаляем временную папку с моделью
+                        rm -rf /tmp-models || true
+        
+                        # Удаляем модели внутри рабочей области
+                        rm -rf models/${env.MODEL_NAME} || true
+                        
+                        # Удаляем Docker образы
+                        docker images -q ${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
+                        docker images -q ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG} | xargs -r docker rmi -f || true
+                        
+                        # Очищаем устаревшие образы (оставляем latest)
+                        docker image prune -f
+                        
+                        # Удаляем ненужные файлы
+                        rm -f trivy-results.txt container-logs.txt docker-build-args.txt || true
+                    """
+        
+                    echo "? Прибрались! Ляпота-то какая, красота!"
+                }
+            }
+            post {
+                success {
+                    script {
+                        def buildDuration = currentBuild.durationString.replace(' and counting', '')
+
+                        sh """
+                            # Готовим данные для уведомления
+                            cat > success-notification.md << EOF
+                            ? *Pipeline Успешно Завершен!* ??
+
+                            *Информация о сборке:*
+                            - Job: ${env.JOB_NAME}
+                            - Build: #${env.BUILD_NUMBER}
+                            - Модель: ${env.MODEL_NAME}
+                            - Репозиторий: ${env.HF_REPO}
+                            - Тег образа: ${IMAGE_TAG}
+                            - Время сборки: ${buildDuration}
+
+                            *Доступ к образу:*
+                            docker pull ${REGISTRY}/${DOCKER_REPO_NAME}/${env.IMAGE_NAME}:${IMAGE_TAG}
+
+                            *Статус: УСПЕХ* ??
+                            EOF
+
+                            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                            -d chat_id=${TELEGRAM_CHAT_ID} \
+                            -d text="\$(cat success-notification.md)" \
+                            -d parse_mode=Markdown
+                        """
+
+                        // Записываем метрики для анализа
+                        def imageSize = sh(script: "docker images ${env.IMAGE_NAME}:${IMAGE_TAG} --format '{{.Size}}' || echo 'Unknown'", returnStdout: true).trim()
+                        echo "?? Метрики сборки:"
+                        echo "- Время сборки: ${buildDuration}"
+                        echo "- Размер образа: ${imageSize}"
+                    }
+                }
+
+                failure {
+                    script {
+                        def failureStage = currentBuild.rawBuild.getCauses().isEmpty() ? "Unknown" : currentBuild.rawBuild.getCauses().get(0).getShortDescription()
+
+                        sh """
+                            # Готовим данные для уведомления о сбое
+                            cat > failure-notification.md << EOF
+                            ❌ *Pipeline Завершился с Ошибкой!* 🚨
+
+                            *Информация о сборке:*
+                            - Job: ${env.JOB_NAME}
+                            - Build: #${env.BUILD_NUMBER}
+                            - Модель: ${env.MODEL_NAME}
+                            - Этап сбоя: ${failureStage}
+
+                            *Упс! Надевай очки и иди читать логи! ${env.IMAGE_NAME} не хочет чтобы его скачали*
+
+                            [Просмотр логов](${env.BUILD_URL}console)
+                            EOF
+
+                            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                            -d chat_id=${TELEGRAM_CHAT_ID} \
+                            -d text="\$(cat failure-notification.md)" \
+                            -d parse_mode=Markdown
+                        """
+
+                        // Сохраняем логи неудачных билдов
+                        archiveArtifacts artifacts: '**/*.log,**/*.txt', allowEmptyArchive: true
+                    }
+                }
+
+                always {
+                    script {
+                        sh """
+                            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                            -d chat_id=${TELEGRAM_CHAT_ID} \
+                            -d text="ℹ️ *Все гуд, выдохни! Процесс для ${env.IMAGE_NAME} завершен*\\nJob: ${env.JOB_NAME}\\nBuild: #${env.BUILD_NUMBER}" \
+                            -d parse_mode=Markdown
+                        """
+
+
+                        cleanWs(deleteDirs: true)
+                    }
+                }
+            }
         }
     }
 }
