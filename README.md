@@ -1,7 +1,133 @@
 # ml-ci-pipeline
-Test setup tp practice automatic LLM fetching from huggingface. Uses docker-compose to run Jenkins, Minio and Nexus.
-```yaml
-1)Modify model-config.yaml to specify the model to be fetched (name, repositry, size)
-2)Run the pipeline
-3)Check if the model has been fetched and the docker image is present in Nexus
-```
+
+Этот репозиторий содержит Jenkins-пайплайн, предназначенный для автоматической загрузки и развертывания моделей машинного обучения с Hugging Face в хранилище объектов MinIO или репозиторий артефактов Nexus. Он предоставляет гибкое и многократно используемое решение для управления развертыванием моделей ML.
+
+## Обзор
+
+Пайплайн автоматизирует следующие шаги:
+
+1.  **Загрузка модели:** Загружает модели машинного обучения с Hugging Face на основе предоставленного имени модели и ревизии.
+2.  **Хранение в MinIO или Nexus:** Загружает загруженные модели в указанный бакет MinIO или репозиторий артефактов Nexus.
+
+Этот пайплайн разработан как универсальный, способный обрабатывать различные типы моделей (например, PyTorch, TensorFlow, ONNX и любые другие модели, предоставляемые Hugging Face).
+
+## Необходимые условия
+
+Перед использованием этого пайплайна убедитесь, что у вас есть следующее:
+
+* **Jenkins:** Запущенный экземпляр Jenkins.
+* **MinIO (опционально):** Запущенный сервер хранилища объектов MinIO.
+* **Nexus (опционально):** Запущенный репозиторий артефактов Nexus.
+* **Токен API Hugging Face (опционально):** Если вам нужно загружать частные модели или модели с ограниченным доступом, вам потребуется токен API Hugging Face.
+* **kubectl (опционально):** Если minio или nexus запущены внутри kubernetes.
+* **Учетные данные Jenkins:**
+    * `minio-credentials` (опционально): Учетные данные имени пользователя/пароля для доступа к MinIO.
+    * `nexus-credentials` (опционально): Учетные данные имени пользователя/пароля для доступа к Nexus.
+    * `huggingface-token` (опционально): Учетные данные секретного текста для вашего токена API Hugging Face.
+* **Плагины Jenkins:**
+    * Pipeline
+    * Credentials Binding
+    * MinIO Client (mc) установлен на агенте Jenkins.
+    * curl/wget установлен на агенте Jenkins.
+    * Любой плагин, необходимый для взаимодействия с Nexus.
+
+## Настройка
+
+1.  **Клонирование репозитория:**
+
+    ```bash
+    git clone [https://github.com/ramili4/ml-ci-pipeline.git](https://github.com/ramili4/ml-ci-pipeline.git)
+    cd ml-ci-pipeline
+    ```
+
+2.  **Настройка учетных данных Jenkins:**
+
+    * В вашем экземпляре Jenkins перейдите в "Credentials" -> "System" -> "Global credentials (unrestricted)".
+    * Добавьте учетные данные "Username with password" с идентификатором `minio-credentials` и введите имя пользователя и пароль MinIO (если используете MinIO).
+    * Добавьте учетные данные "Username with password" с идентификатором `nexus-credentials` и введите имя пользователя и пароль Nexus (если используете Nexus).
+    * (Опционально) Добавьте учетные данные "Secret text" с идентификатором `huggingface-token` и введите свой токен API Hugging Face.
+
+3.  **Создание Jenkins-пайплайна:**
+
+    * В Jenkins создайте новый элемент "Pipeline".
+    * В разделе "Pipeline" выберите "Pipeline script from SCM".
+    * Выберите "Git" в качестве SCM.
+    * Введите URL-адрес репозитория: `https://github.com/ramili4/ml-ci-pipeline.git`.
+    * Укажите ветку (например, `main`).
+    * Сохраните пайплайн.
+
+4.  **Запуск пайплайна:**
+
+    * Запустите сборку пайплайна.
+    * Вам будет предложено ввести следующие параметры:
+        * `MODEL_NAME`: Имя модели на Hugging Face (например, `microsoft/phi-2`).
+        * `REVISION`: Ревизия модели (ветка или тег, например, `main`).
+        * `STORAGE_TYPE`: `minio` или `nexus`, чтобы выбрать, где хранить модель.
+        * Если используется Nexus, добавьте любые другие параметры, необходимые для вашей реализации Nexus.
+
+## Параметры пайплайна
+
+* **`MODEL_NAME` (строка):** Имя модели на Hugging Face (например, `microsoft/phi-2`).
+* **`REVISION` (строка):** Ревизия (ветка или тег) модели для загрузки (например, `main`).
+* **`STORAGE_TYPE` (строка):** Тип хранилища для использования (`minio` или `nexus`).
+* Любые дополнительные параметры, необходимые для Nexus.
+
+## Переменные окружения
+
+* **`MINIO_URL`:** URL-адрес вашего сервера MinIO (например, `http://minio-server:9000`).
+* **`BUCKET_NAME`:** Имя бакета MinIO для хранения моделей (например, `models`).
+* **`HUGGINGFACE_URL`:** Базовый URL-адрес Hugging Face (например, `https://huggingface.co`).
+* **`HUGGINGFACE_API_TOKEN`:** Токен API Hugging Face (полученный из учетных данных Jenkins).
+* **`MINIO_USER`:** Имя пользователя MinIO, полученное из учетных данных Jenkins.
+* **`MINIO_PASS`:** Пароль MinIO, полученный из учетных данных Jenkins.
+* Любые другие переменные окружения, необходимые для Nexus.
+
+## Этапы пайплайна
+
+1.  **Checkout:** Клонирует репозиторий.
+2.  **Download Model:** Загружает файлы модели с Hugging Face.
+3.  **Store Model:** Загружает загруженную модель в выбранное хранилище (MinIO или Nexus).
+
+## Примеры использования
+
+* **Загрузка `microsoft/phi-2` из ветки `main` и хранение в MinIO:**
+
+    * `MODEL_NAME`: `microsoft/phi-2`
+    * `REVISION`: `main`
+    * `STORAGE_TYPE`: `minio`
+
+* **Загрузка `bert-base-uncased` из `v1.0` и хранение в Nexus:**
+
+    * `MODEL_NAME`: `bert-base-uncased`
+    * `REVISION`: `v1.0`
+    * `STORAGE_TYPE`: `nexus`
+    * Любые другие параметры Nexus.
+
+## Устранение неполадок
+
+* **Ошибка "Failed to download file":**
+    * Проверьте подключение к Интернету.
+    * Проверьте имя модели и ревизию.
+    * Убедитесь, что ваш токен API Hugging Face действителен (если применимо).
+* **Ошибка "Failed to upload to MinIO":**
+    * Проверьте учетные данные MinIO.
+    * Убедитесь, что сервер MinIO запущен и доступен.
+    * Проверьте имя бакета MinIO.
+    * Убедитесь, что клиент `mc` установлен на агенте Jenkins.
+* **Ошибка "Failed to upload to Nexus":**
+    * Проверьте учетные данные Nexus.
+    * Убедитесь, что сервер Nexus запущен и доступен.
+    * Проверьте имя или группу репозитория Nexus.
+    * Проверьте конфигурацию, специфичную для Nexus.
+* **Ошибка "No pod is selected":**
+    * Проверьте имя модели и ревизию.
+    * Проверьте, что модель существует на huggingface.
+    * Проверьте, что токен huggingface имеет правильный доступ.
+
+## Вклад
+
+Вклад приветствуется! Пожалуйста, отправьте pull request с вашими изменениями.
+
+## Лицензия
+
+Этот проект лицензирован под [MIT License](LICENSE).
